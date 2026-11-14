@@ -1,0 +1,28 @@
+{
+  "port": 80,
+  "language": "en",
+  "homewizard": {
+    "host": "192.168.0.241",
+    "interval": 1,
+    "water": {
+      "report_interval": 300
+    }
+  },
+  "alfen": {
+    "host": "192.168.0.204",
+    "username": "admin",
+    "password": "CHANGE-ME",
+    "interval": 10
+  },
+  "sma": {
+    "host": "192.168.0.131",
+    "unit": 3,
+    "register": 30775,
+    "interval": 1
+  },
+  "bmw": {
+    "client_id": "your-client-id",
+    "vin": "WB...",
+    "home": "50.8949,4.3414"
+  }
+}
