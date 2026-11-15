@@ -14,9 +14,11 @@
 <meta name="apple-mobile-web-app-title" content="Energie">
 <style>
 :root{--bg:#f6f7f9;--card:#fff;--fg:#14171c;--mute:#667085;--line:#e4e7ec;
---grid-in:#e5484d;--grid-out:#2f9e6b;--solar:#e69500;--charger:#2f7de1;--home:#7c5cdb;--water:#0d9aa8;--soc:#c2389a}
+--grid-in:#e5484d;--grid-out:#2f9e6b;--solar:#e69500;--charger:#2f7de1;--home:#7c5cdb;--water:#0d9aa8;--soc:#c2389a;
+--phase1:#0072b2;--phase2:#d55e00;--phase3:#009e73}
 @media (prefers-color-scheme:dark){:root{--bg:#0f1115;--card:#171a21;--fg:#eef0f3;--mute:#8b93a1;--line:#272c36;
---grid-in:#ff6369;--grid-out:#3dd68c;--solar:#ffc53d;--charger:#5b9dff;--home:#a78bfa;--water:#2dd4e0;--soc:#ff7ac6}}
+--grid-in:#ff6369;--grid-out:#3dd68c;--solar:#ffc53d;--charger:#5b9dff;--home:#a78bfa;--water:#2dd4e0;--soc:#ff7ac6;
+--phase1:#56b4e9;--phase2:#e69f00;--phase3:#00c996}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
 header{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;padding:12px 14px 0;max-width:1200px;margin:auto}
@@ -31,7 +33,11 @@ nav button.on{background:var(--fg);color:var(--bg);border-color:var(--fg)}
 main{display:grid;gap:12px;padding:12px 14px 20px;max-width:1200px;margin:auto;grid-template-columns:repeat(auto-fit,minmax(min(100%,520px),1fr))}
 section{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 12px 6px}
 section.wide{grid-column:1/-1}
+section.phases{grid-column:1}
 .head{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 8px}
+.phase-legend{display:flex;flex-wrap:wrap;gap:3px 12px;color:var(--mute);font-size:11px;padding-top:2px}
+.phase-legend:empty{display:none}
+.phase-legend span{white-space:nowrap}
 .name{font-weight:600}.sub{color:var(--mute);font-size:12px;flex:1;min-width:140px}
 .sub b{font-weight:400;font-size:11px}
 .val{font-size:24px;font-weight:650;font-variant-numeric:tabular-nums}
@@ -70,6 +76,7 @@ const TEXT = {
   nl: {
     connection:'verbinding', balance:'Energiebalans', grid:'Net', solar:'Zon', carBattery:'Auto batterij', water:'Water', peak:'Maandpiek',
     gridNote:'+ afname · − injectie', solarNote:'productie',
+    phases:'Netverbruik per fase', phasesNote:'+ afname · − injectie', phaseL1:'L1', phaseL2:'L2', phaseL3:'L3', phaseThree:'3-fase',
     house:'huis', carCharging:'Auto laden', gridImport:'Netafname', gridExport:'Injectie', solarGenerated:'Zon opgewekt', selfConsumption:'Zelfverbruik zon',
     summaryTitle:'Verbruik en opwekking · laatste {0}', summaryNote:'Energie over de geselecteerde periode · ≈ geeft onvolledige meetdekking aan',
     noData:'geen data', noSources:'Geen data: {0}', noUsage:'geen verbruik te berekenen', missing:'ontbreekt', conjunction:' en ',
@@ -87,6 +94,7 @@ const TEXT = {
   en: {
     connection:'connection', balance:'Energy balance', grid:'Grid', solar:'Solar', carBattery:'Car battery', water:'Water', peak:'Monthly peak',
     gridNote:'+ import · − export', solarNote:'production',
+    phases:'Grid power by phase', phasesNote:'+ import · − export', phaseL1:'L1', phaseL2:'L2', phaseL3:'L3', phaseThree:'3-phase',
     house:'home', carCharging:'Car charging', gridImport:'Grid import', gridExport:'Grid export', solarGenerated:'Solar generated', selfConsumption:'Solar self-use',
     summaryTitle:'Usage and generation · last {0}', summaryNote:'Energy for the selected period · ≈ indicates incomplete measurement coverage',
     noData:'no data', noSources:'No data: {0}', noUsage:'cannot calculate usage', missing:'missing', conjunction:' and ',
@@ -108,18 +116,19 @@ const tr = (key, ...args) => {
   for (let i = 0; i < args.length; i++) s = s.replace(`{${i}}`, args[i]);
   return s;
 };
-// V-indexen: 0 net (W), 1 zon (W), 2 laadpaal (W), 3 huis (W), 4 water (mL verbruikt per sample)
+// V-indexen: 0 net, 1 zon, 2 laadpaal, 3 huis, 4 water, 5-7 netvermogen per fase
 const M = [
   {k:'balance', nameKey:'balance', stack:true, balance:true, signed:true, wide:true, h:270},
   {k:'grid',  i:0, nameKey:'grid',  noteKey:'gridNote', signed:true},
   {k:'solar', i:1, nameKey:'solar',  noteKey:'solarNote'},
+  {k:'phases', i:[5,6,7], nameKey:'phases', noteKey:'phasesNote', phases:true, signed:true},
   {k:'soc', nameKey:'carBattery', soc:true, hidden:true, tick: v => v + '%'},
   {k:'water', i:4, nameKey:'water', water:true, tick: v => String(+v.toFixed(1)).replace('.', language === 'nl' ? ',' : '.')},
 ];
 const SRC_KEY = {grid:'grid', solar:'solar', charger:'chargerSource', water:'water'};
 TEXT.nl.chargerSource = 'laadpaal'; TEXT.en.chargerSource = 'charger';
 const RANGES = [900,3600,21600,86400];
-let T = [], V = [[],[],[],[],[]], since = null, now = Date.now()/1000, span = 900, cursor = null, wAt = null, wInt = 300, hasCharger = false, hasGrid = false, hasSolar = false, S = [], socOn = false, peak = null, carDistance = null;
+let T = [], V = Array.from({length:8}, () => []), since = null, now = Date.now()/1000, span = 900, cursor = null, wAt = null, wInt = 300, hasCharger = false, hasGrid = false, hasSolar = false, S = [], socOn = false, peak = null, carDistance = null, phaseAppliances = {};
 
 // ---- DOM
 const main = document.getElementById('charts');
@@ -127,11 +136,18 @@ for (const m of M) {
   m.name = tr(m.nameKey);
   const s = document.createElement('section');
   if (m.wide) s.className = 'wide';
+  if (m.phases) s.classList.add('phases');
   s.innerHTML = `<div class="head"><span class="name">${m.name}</span><span class="sub"></span><span class="val">–</span></div><canvas></canvas>`;
   main.appendChild(s); m.sec = s;
   m.cv = s.querySelector('canvas'); m.ctx = m.cv.getContext('2d');
+  if (m.phases) {
+    m.legend = document.createElement('div');
+    m.legend.className = 'phase-legend';
+    s.insertBefore(m.legend, m.cv);
+  }
   if (m.h) m.cv.style.height = m.h + 'px';
   m.val = s.querySelector('.val'); m.sub = s.querySelector('.sub');
+  if (m.phases) m.val.style.display = 'none';
   if (m.balance) {
     const summary = document.createElement('div');
     summary.className = 'summary';
@@ -177,6 +193,7 @@ function setLanguage(code) {
   }
   for (const el of document.querySelectorAll('[data-label]')) el.textContent = tr(el.dataset.label);
   for (const b of nav.children) b.textContent = TEXT[language].rangeButtons[b.dataset.seconds];
+  renderPhaseLegend();
   render();
 }
 
@@ -188,7 +205,7 @@ async function getJSON(url) {
 }
 async function loadHistory() {
   const d = await getJSON('/api/history');
-  T = d.t; V = [d.grid, d.solar, d.charger, d.home, d.water || []]; since = d.until; now = d.now; wAt = d.water_at; wInt = d.water_interval || 300; S = d.soc || []; extras(d); setSrc(d.src);
+  T = d.t; V = [d.grid, d.solar, d.charger, d.home, d.water || [], d.phase_l1 || [], d.phase_l2 || [], d.phase_l3 || []]; since = d.until; now = d.now; wAt = d.water_at; wInt = d.water_interval || 300; S = d.soc || []; extras(d); setSrc(d.src, d.three_phase, d.appliances);
   setLanguage(d.language === 'en' ? 'en' : 'nl');
 }
 function extras(d) {
@@ -197,12 +214,31 @@ function extras(d) {
   const l = d.soc_last;
   if (l && (!S.length || l[0] > S[S.length - 1][0])) S.push(l);
 }
-function setSrc(src) {
+function setSrc(src, threePhase, appliances) {
   for (const m of M) if (m.soc) { m.hidden = !socOn; m.sec.style.display = m.hidden ? 'none' : ''; }
   hasCharger = 'charger' in src; hasGrid = 'grid' in src; hasSolar = 'solar' in src;
+  phaseAppliances = appliances || {};
+  for (const m of M) if (m.phases) { m.hidden = !hasGrid || !threePhase; m.sec.style.display = m.hidden ? 'none' : ''; }
+  renderPhaseLegend();
   for (const m of M) if (m.k === 'water') { m.hidden = !('water' in src); m.sec.style.display = m.hidden ? 'none' : ''; }
   const bad = Object.keys(src).filter(k => !src[k]).map(k => tr(SRC_KEY[k] || k));
   document.getElementById('warn').textContent = bad.length ? tr('noSources', bad.join(', ')) : '';
+}
+function renderPhaseLegend() {
+  const m = M.find(x => x.phases);
+  if (!m?.legend) return;
+  const colors = {l1:'--phase1', l2:'--phase2', l3:'--phase3', '3phase':'--home'};
+  m.legend.replaceChildren();
+  for (const key of ['l1', 'l2', 'l3', '3phase']) {
+    const names = phaseAppliances[key]?.trim();
+    if (!names) continue;
+    const item = document.createElement('span');
+    item.style.color = `var(${colors[key]})`;
+    item.textContent = '● ';
+    const label = key === '3phase' ? tr('phaseThree') : key.toUpperCase();
+    item.append(document.createTextNode(`${label}: ${names}`));
+    m.legend.appendChild(item);
+  }
 }
 function trim() {
   const cutoff = now - 86400; let n = 0;
@@ -218,8 +254,8 @@ async function tick() {
       const d = await getJSON('/api/live?since=' + since);
       if (d.reload) await loadHistory();
       else {
-        for (const s of d.samples) { T.push(s[0]); for (let j = 0; j < 5; j++) V[j].push(s[j+1]); since = s[0]; }
-        now = d.now; wAt = d.water_at; wInt = d.water_interval || wInt; extras(d); setSrc(d.src);
+        for (const s of d.samples) { T.push(s[0]); for (let j = 0; j < 8; j++) V[j].push(s[j+1]); since = s[0]; }
+        now = d.now; wAt = d.water_at; wInt = d.water_interval || wInt; extras(d); setSrc(d.src, d.three_phase, d.appliances);
       }
     }
     trim(); dot.className = 'dot on'; render();
@@ -388,6 +424,13 @@ function render() {
         m.val.textContent = i < 0 ? '–' : Math.round(S[i][1]) + ' %';
         m.sub.textContent = i < 0 ? hhmm(ct) + ' · ' + tr('noData') : tr('lastReport', stamp(S[i][0]));
       }
+    } else if (m.phases) {
+      const colors = ['--phase1', '--phase2', '--phase3'];
+      const labels = ['phaseL1', 'phaseL2', 'phaseL3'];
+      const values = m.i.map(i => n < 0 ? null : V[i][n]);
+      m.sub.innerHTML = (when ? when + ' · ' : '') +
+        values.map((v, i) => `<b style="color:var(${colors[i]})">●</b> ${tr(labels[i])} ${fmt(v)}`).join(' · ') +
+        ` · ${tr('phasesNote')}`;
     } else if (m.water) {
       if (wb.wat == null) { m.val.textContent = '–'; m.sub.textContent = tr('waterWait'); }
       else if (ct == null) {
@@ -452,17 +495,18 @@ function draw(m, col, wb) {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, W, H);
   const t1 = now, t0 = now - span, padB = 16, ph = H - padB;
 
-  let solarPts = [], gridPts = [], unkPts = [];            // zon- en netlijn (energiebalans), totaal zonder bekende verdeling
+  let solarPts = [], gridPts = [], unkPts = [], phasePts = []; // extra lijnen in energiebalans en fasegrafiek
   let top = [], low = null;                  // top = zichtbare reeks (bij stapeling het totaal), low = onderste laag
   if (m.water || m.soc) { /* eigen tekening: zie onderaan */ }
   else if (m.stack) { const [h, tk, tu] = stackLayers(); low = columns(h, t0, W); top = columns(tk, t0, W); unkPts = columns(tu, t0, W); }
+  else if (m.phases) phasePts = m.i.map(i => columns(V[i], t0, W));
   else top = columns(V[m.i], t0, W);
   if (m.balance) { solarPts = columns(V[1], t0, W); gridPts = columns(V[0], t0, W); }
 
   // y-bereik
   let lo = 0, hi = 0;
   if (m.water) { for (const p of wb.pts) hi = Math.max(hi, p[1]); }
-  for (const p of top.concat(solarPts, gridPts, unkPts)) if (p) { if (p[1] < lo) lo = p[1]; if (p[1] > hi) hi = p[1]; }
+  for (const p of top.concat(solarPts, gridPts, unkPts, ...phasePts)) if (p) { if (p[1] < lo) lo = p[1]; if (p[1] > hi) hi = p[1]; }
   if (!m.signed) lo = 0;
   const minR = m.water ? 1 : 100;
   if (hi - lo < minR) { hi = Math.max(hi, lo + minR); if (m.signed && lo === 0) lo = -Math.min(100, hi); }
@@ -568,6 +612,9 @@ function draw(m, col, wb) {
         ctx.restore();
       }
     }
+  } else if (m.phases) {
+    for (const [i, points] of phasePts.entries())
+      for (const sg of segments(points)) paint(sg, col(['--phase1', '--phase2', '--phase3'][i]), null, 0);
   } else if (m.signed) { series(col('--grid-in'), [0, y0]); series(col('--grid-out'), [y0, H - y0]); }
   else series(col('--' + m.k));
 

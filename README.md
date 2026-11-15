@@ -17,7 +17,7 @@ The dashboard can be displayed in English or Dutch, as set in `config.json`. Its
 | Graph | Source | Details |
 |---|---|---|
 | Energy balance | All-in-one: Home + Charger stacked, with Solar and Grid lines overlaid (red = import, green = export) | + / − |
-| Grid | HomeWizard P1 | + import, − export |
+| Grid | HomeWizard P1 | + import, − export; a separate chart shows per-phase power for three-phase connections |
 | Solar | SMA inverter | Production, ≥ 0 |
 | Car battery (optional) | BMW CarData stream | Charge level in %, distance from a configured reference point; dashed when the car has not reported recently |
 | Water | Water meter connected to the P1 (optional) | Litres per time slot, drawn as a smooth wave; header shows the total for the selected range |
@@ -55,6 +55,17 @@ cp config.example.json config.json
 ```
 
 Edit the IP addresses and credentials, and set the root-level `language` to `"en"` or `"nl"` (defaults to Dutch). Omit a device section to disable that source (a missing source counts as 0 in the "Home" calculation). Polling intervals are in seconds: HomeWizard and SMA default to 1; Alfen defaults to 10 to reduce load on the charger. Set each device's `interval` to tune it. `homewizard.water.report_interval` is different: it is the expected interval between water-meter reports, not the P1 polling rate. BMW CarData is a continuous event stream and has no polling interval. Optional root keys: `port`, `bind`, `data_dir`; Alfen: `username`, `port`, `property`; SMA: `port`, `unit`, `register`, `function` (3 or 4).
+
+For a three-phase connection, the phase graph appears when the P1 reports all three phase readings. Optionally add appliance names to the root `appliances` object; non-empty entries appear as a small legend above that graph:
+
+```json
+"appliances": {
+  "3phase": "heat pump, induction hob",
+  "l1": "EV charger, dryer",
+  "l2": "washing machine",
+  "l3": "oven"
+}
+```
 
 ## 3. Run on a laptop (try it out)
 
@@ -133,8 +144,8 @@ Good to know:
 ## How it works / good to know
 
 - Each polled device runs in its own thread at its configured interval; one sample per wall-clock second is stored (integer watts). A reading is marked missing once it is older than the greater of 5 seconds and two polling intervals plus 2 seconds. If only the charger is offline, total consumption (grid + solar) remains visible and is drawn in grey as "home + charger, split unknown"; if the grid or solar source is offline, consumption is a gap. The page lists offline sources at the top.
-- The last 24 hours live in memory (~86,400 samples, a few MB). They are appended to `samples-v3.bin` once a minute and trimmed to 24 hours hourly, minimizing SD-card wear; a restart loses at most a minute. The latest BMW location is saved separately in `car-position.json`, without a location history. Location: `data_dir`, otherwise `$STATE_DIRECTORY` (systemd: `/var/lib/energy-monitor`), otherwise `./data`.
-- The page loads history once (10-second buckets), then fetches only new samples every second. Tap or hover over a graph to read values at that time. The buttons 15m (default) / 1h / 6h / 24h switch the time range because a one-second change is less than a pixel on a 24-hour axis.
+- The last 24 hours live in memory (~86,400 samples, a few MB). They are appended to `samples-v4.bin` once a minute and trimmed to 24 hours hourly, minimizing SD-card wear; a restart loses at most a minute. Existing `samples-v3.bin` history is upgraded automatically; phase readings are available from the update onward. The latest BMW location is saved separately in `car-position.json`, without a location history. Location: `data_dir`, otherwise `$STATE_DIRECTORY` (systemd: `/var/lib/energy-monitor`), otherwise `./data`.
+- The page loads history once (10-second buckets), then fetches only new samples every second. Tap or hover over a graph to read values at that time. On three-phase connections, a separate chart shows the HomeWizard P1's power on L1, L2, and L3; positive values are import and negative values export. The buttons 15m (default) / 1h / 6h / 24h switch the time range because a one-second change is less than a pixel on a 24-hour axis.
 - "Home" is clamped at 0 because the devices are not sampled at exactly the same instant. Solar and charger readings are clamped at ≥ 0 (standby noise).
 - There is no authentication: keep it on your home network and do not forward its port from the internet.
 

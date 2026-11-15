@@ -33,10 +33,12 @@ MAX_AGE = 5                 # a reading older than this (s) counts as missing (m
 STATIC = {"manifest.webmanifest": "application/manifest+json", "icon-192.png": "image/png",
           "icon-512.png": "image/png", "icon-maskable-512.png": "image/png", "apple-touch-icon.png": "image/png"}
 HISTORY_STEP = 10           # seconds per bucket in /api/history
-REC = struct.Struct("<I5i")  # ts, grid, solar, charger, home (W), water (mL used that second); NONE = missing
+REC = struct.Struct("<I8i")  # ts, grid/solar/charger/home (W), water (mL), and P1 phases (W); NONE = missing
+REC_V3 = struct.Struct("<I5i")
+SAMPLE_FIELDS = ("grid", "solar", "charger", "home", "water", "phase_l1", "phase_l2", "phase_l3")
 NONE = -(2 ** 31)
 
-samples: deque = deque(maxlen=WINDOW + 60)  # (ts, grid, solar, charger, home, water), ints or None
+samples: deque = deque(maxlen=WINDOW + 60)  # ts followed by SAMPLE_FIELDS; ints or None
 pending: list = []          # samples not yet written to disk
 latest: dict = {}           # source -> (value, time.time())
 acc: dict = {}              # volume sources: amount reported since the last sample
@@ -52,6 +54,7 @@ reference_position: tuple = None  # (latitude, longitude), from config
 reference_name = "referentiepunt"
 position_path = None
 dashboard_language = "nl"
+dashboard_appliances: dict = {}
 lock = threading.Lock()
 io_lock = threading.Lock()
 sources: dict = {}          # configured source name -> read() function
@@ -160,11 +163,14 @@ def peak_update(d: dict) -> None:
 
 
 def make_grid(p1: P1):
-    """P1 active power in W (+ import, - export)."""
-    def read() -> float:
+    """P1 active power in W (+ import, - export), including the three phases."""
+    def read() -> dict:
         d = p1.get()
         peak_update(d)
-        return float(d["active_power_w"])
+        return {"grid": float(d["active_power_w"]),
+                "three_phase": all(d.get(f"active_power_l{i}_w") is not None for i in range(1, 4)),
+                **{f"phase_l{i}": float(d[f"active_power_l{i}_w"])
+                   for i in range(1, 4) if d.get(f"active_power_l{i}_w") is not None}}
     return read
 
 
@@ -330,14 +336,21 @@ def poller(name: str, read) -> None:
         try:
             value = read()
             if value is not None:  # None = nothing to report yet
-                with lock:
-                    if name in ACCUMULATE:  # volumes add up until the sampler takes them
-                        acc[name] = acc.get(name, 0.0) + value
-                        latest[name] = (0.0, time.time())
-                    else:
-                        latest[name] = (value, time.time())
+                if isinstance(value, dict):
+                    reported = value.get(name)
+                    at = time.time()
+                    with lock:
+                        latest.update({key: (reading, at) for key, reading in value.items()})
+                else:
+                    reported = value
+                    with lock:
+                        if name in ACCUMULATE:  # volumes add up until the sampler takes them
+                            acc[name] = acc.get(name, 0.0) + value
+                            latest[name] = (0.0, time.time())
+                        else:
+                            latest[name] = (value, time.time())
                 if ok is not True:
-                    log(f"{name}: ok ({value:g})")
+                    log(f"{name}: ok ({reported:g})")
                     ok = True
         except Exception as e:  # noqa: BLE001 - keep polling whatever happens
             if ok is not False:
@@ -362,6 +375,7 @@ def sampler() -> None:
         last = ts
         with lock:
             v = {n: fresh(n, now) for n in sources}
+            phases = tuple(fresh(f"phase_l{i}", now) for i in range(1, 4))
             used = acc.pop("water", 0.0)  # litres reported since the previous sample
         g, s, c = v.get("grid"), v.get("solar"), v.get("charger")
         if s is not None:
@@ -379,6 +393,7 @@ def sampler() -> None:
         w = None if v.get("water") is None else used * 1000  # millilitres
         row = (ts,) + tuple(None if x is None else int(round(x)) for x in (g, s, c, home))
         row += (None if w is None else int(round(w)),)
+        row += tuple(None if x is None else int(round(x)) for x in phases)
         with lock:
             samples.append(row)
             pending.append(row)
@@ -456,25 +471,30 @@ def soc_load(path: Path) -> None:
 
 # --------------------------------------------------------------------------- persistence
 def load(path: Path) -> None:
-    legacy = path.with_name("samples-v2.bin")  # older file: water was stored in other units
-    src = legacy if not path.exists() and legacy.exists() else path
+    legacy = path.with_name("samples-v3.bin")
+    older_legacy = path.with_name("samples-v2.bin")
+    src = path if path.exists() else legacy if legacy.exists() else older_legacy
+    old_format = src != path
     try:
-        n = src.stat().st_size // REC.size
+        record = REC if not old_format else REC_V3
+        n = src.stat().st_size // record.size
     except FileNotFoundError:
         return
     keep = min(n, WINDOW)
     with open(src, "rb") as f:
-        f.seek((n - keep) * REC.size)
-        data = f.read(keep * REC.size)
+        f.seek((n - keep) * record.size)
+        data = f.read(keep * record.size)
     cutoff = time.time() - WINDOW
-    for ts, *vals in REC.iter_unpack(data):
+    for ts, *vals in record.iter_unpack(data):
         if ts > cutoff:
             vals = [None if x == NONE else x for x in vals]
-            if src == legacy:
+            if src == older_legacy:
                 vals[4] = None
+            if old_format:
+                vals.extend((None, None, None))
             samples.append((ts,) + tuple(vals))
     log(f"loaded {len(samples)} samples from {src}")
-    if src == legacy:
+    if old_format:
         compact(path)
 
 
@@ -536,6 +556,12 @@ def extras(history: bool = False) -> dict:
     return out
 
 
+def three_phase_available() -> bool:
+    now = time.time()
+    with lock:
+        return "grid" in sources and fresh("three_phase", now) is True
+
+
 def history_payload() -> dict:
     now = int(time.time())
     cutoff = now - WINDOW
@@ -543,7 +569,7 @@ def history_payload() -> dict:
         snap = [s for s in samples if s[0] > cutoff]
     buckets: dict = {}
     for ts, *vals in snap:
-        b = buckets.setdefault(ts // HISTORY_STEP, [0, 0, [0] * 5, [0] * 5])
+        b = buckets.setdefault(ts // HISTORY_STEP, [0, 0, [0] * len(SAMPLE_FIELDS), [0] * len(SAMPLE_FIELDS)])
         b[0] += 1
         b[1] += ts
         for i, x in enumerate(vals):
@@ -552,7 +578,7 @@ def history_payload() -> dict:
                 b[3][i] += 1
     keys = sorted(buckets)
     out = {"t": [round(buckets[k][1] / buckets[k][0]) for k in keys]}
-    for i, name in enumerate(("grid", "solar", "charger", "home", "water")):
+    for i, name in enumerate(SAMPLE_FIELDS):
         out[name] = [  # powers are averaged, water volumes are summed
             None if not buckets[k][3][i] else buckets[k][2][i] if name == "water"
             else round(buckets[k][2][i] / buckets[k][3][i])
@@ -563,6 +589,8 @@ def history_payload() -> dict:
     out["water_interval"] = water_info["interval"]
     out["now"] = now
     out["language"] = dashboard_language
+    out["three_phase"] = three_phase_available()
+    out["appliances"] = dashboard_appliances
     out["src"] = source_status()
     out.update(extras(history=True))
     return out
@@ -581,7 +609,8 @@ def live_payload(since: int) -> dict:
         out.reverse()
     return {"now": now, "reload": reload, "samples": out, "src": source_status(),
             "water_at": int(water_info["at"]) if water_info["at"] else None,
-            "water_interval": water_info["interval"], "language": dashboard_language, **extras()}
+            "water_interval": water_info["interval"], "language": dashboard_language,
+            "three_phase": three_phase_available(), "appliances": dashboard_appliances, **extras()}
 
 
 def source_status() -> dict:
@@ -647,18 +676,28 @@ class Server(ThreadingHTTPServer):
 
 # --------------------------------------------------------------------------- main
 def main() -> None:
-    global soc_on, reference_position, reference_name, dashboard_language
+    global soc_on, reference_position, reference_name, dashboard_language, dashboard_appliances
     cfg_path = Path(sys.argv[1]) if len(sys.argv) > 1 else HERE / "config.json"
     cfg = json.loads(cfg_path.read_text())
     dashboard_language = cfg.get("language", "nl")
     if dashboard_language not in ("en", "nl"):
         sys.exit('"config "language" must be "en" or "nl"')
+    appliance_config = cfg.get("appliances", {})
+    if not isinstance(appliance_config, dict):
+        sys.exit('"appliances" must be an object with optional "3phase", "l1", "l2", and "l3" names')
+    if any(key not in ("3phase", "l1", "l2", "l3") for key in appliance_config):
+        sys.exit('"appliances" may only contain "3phase", "l1", "l2", and "l3"')
+    if any(not isinstance(value, str) for value in appliance_config.values()):
+        sys.exit('each "appliances" entry must be a string')
+    dashboard_appliances = {key: value.strip() for key, value in appliance_config.items() if value.strip()}
     reference_position, reference_name = parse_reference_position(cfg)
 
     homewizard_cfg = cfg.get("homewizard")
     p1 = P1(homewizard_cfg) if homewizard_cfg else None
     if p1:
         intervals["grid"] = poll_interval(homewizard_cfg, 1, "homewizard")
+        for i in range(1, 4):
+            intervals[f"phase_l{i}"] = intervals["grid"]
         sources["grid"] = make_grid(p1)
     if "sma" in cfg:
         intervals["solar"] = poll_interval(cfg["sma"], 1, "sma")
@@ -687,7 +726,7 @@ def main() -> None:
         if "bmw" not in cfg:
             sys.exit('add a "bmw" section with your CarData client_id to the config first')
         return bmw.login(cfg["bmw"], data_dir)
-    path = data_dir / "samples-v3.bin"
+    path = data_dir / "samples-v4.bin"
     load(path)
 
     if "bmw" in cfg:
