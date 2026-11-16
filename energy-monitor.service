@@ -1,0 +1,19 @@
+[Unit]
+Description=Home energy monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/bin/python3 /opt/energy-monitor/energy.py /opt/energy-monitor/config.json
+Environment=PYTHONUNBUFFERED=1
+# runs as a throwaway user; history is stored in /var/lib/energy-monitor
+DynamicUser=yes
+StateDirectory=energy-monitor
+# allows the throwaway user to listen on port 80 (set "port": 80 in config.json)
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

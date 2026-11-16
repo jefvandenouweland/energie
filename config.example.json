@@ -1,0 +1,8 @@
+{
+  "port": 80,
+  "homewizard": { "host": "192.168.0.241" },
+  "water":      true,
+  "alfen":      { "host": "192.168.0.204", "username": "admin", "password": "CHANGE-ME", "interval": 10 },
+  "sma":        { "host": "192.168.0.131", "unit": 3, "register": 30775 },
+  "bmw":        { "client_id": "your-client-id", "vin": "WB..." }
+}
