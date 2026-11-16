@@ -2,6 +2,10 @@
 
 Plain Python (standard library only) that polls your devices every second and serves a web page.
 
+![Energie dashboard met voorbeelddata](static/dashboard-demo.png)
+
+*Dashboard met realistische voorbeelddata; waarden zijn niet live.*
+
 The page (in Dutch) shows these graphs and cards (the time range buttons are 15m, 1u, 6u and 24u):
 
 | Graph | Source | Sign |
