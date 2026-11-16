@@ -6,7 +6,7 @@ Plain Python (standard library only) that polls your devices every second and se
 
 *Dashboard met realistische voorbeelddata; waarden zijn niet live.*
 
-The page (in Dutch) shows these graphs and cards (the time range buttons are 15m, 1u, 6u and 24u):
+The page (in Dutch) shows these graphs and cards (the time range buttons are 15m, 1u, 6u and 24u). The energy-balance card also totals house use, car charging, grid import, grid export and solar generation for the selected period, plus the share of solar power used directly in the home. A `≈` marks totals with gaps in the available measurements.
 
 | Graph | Source | Sign |
 |---|---|---|
@@ -44,7 +44,7 @@ Edit the IPs. Leave out a section to disable that source (a missing source count
 python3 energy.py
 ```
 
-Open `http://localhost:<port>`, or from your phone `http://<laptop-ip>:<port>` (the example config uses port 80; set `"port": 8080` when trying it on a laptop, because ports below 1024 need root there). The console prints `grid: ok` / `grid: ERROR …` whenever a source changes state, which is the quickest way to debug a device.
+Open `http://localhost:<port>`, or from your phone `http://<laptop-ip>:<port>` (the example config uses port 80; set `"port": 8080` when trying it on a laptop, because ports below 1024 need root there). The console prints `grid: ok` / `grid: ERROR …` whenever a source changes state, including the exception type. BMW errors include the retry delay; new stream data logs sample keys, making it easier to find the battery field your car reports.
 
 ## 4. Install on a Raspberry Pi (or any systemd Linux)
 

@@ -315,7 +315,12 @@ class Stream:
         if new:
             self.seen.update(new)
             hint = sorted(k for k in new if re.search(r"soc|batter|charg", k, re.I))
-            self.log(f"bmw: {len(new)} new data point(s) in the stream" + (": " + ", ".join(hint) if hint else ""))
+            keys = hint or sorted(new)
+            shown = ", ".join(keys[:8])
+            if len(keys) > 8:
+                shown += f", ... (+{len(keys) - 8})"
+            detail = f"battery-related keys: {shown}" if hint else f"sample keys (none look battery-related): {shown}"
+            self.log(f"bmw: {len(new)} new data point(s) in the stream; {detail}")
         for rank, key in enumerate(self.keys):
             if key not in data or rank > self.rank:
                 continue
@@ -337,6 +342,6 @@ class Stream:
                 self.session(self.tokens.ensure())
                 backoff = 20
             except Exception as e:  # noqa: BLE001 - keep trying whatever happens
-                self.note(f"{e}")
+                self.note(f"ERROR {type(e).__name__}: {e}; retrying in {backoff}s")
                 time.sleep(backoff)
                 backoff = min(300, backoff * 2)

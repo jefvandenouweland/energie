@@ -39,6 +39,20 @@ section.wide{grid-column:1/-1}
 #peak .bar i.hot{background:var(--solar)}#peak .bar i.over{background:var(--grid-in)}
 #peak .note{color:var(--mute);font-size:12px;padding-bottom:6px}
 canvas{display:block;width:100%;height:170px;touch-action:pan-y}
+.summary{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;padding:8px 0 6px}
+.summary-title{grid-column:1/-1;color:var(--mute);font-size:12px}
+.summary-item{min-width:0;padding:7px 9px;background:var(--bg);border:1px solid var(--line);border-radius:8px}
+.summary-label{display:block;overflow:hidden;color:var(--mute);font-size:11px;text-overflow:ellipsis;white-space:nowrap}
+.summary-value{display:block;margin-top:2px;font-size:17px;font-weight:650;font-variant-numeric:tabular-nums;white-space:nowrap}
+.summary-item.home .summary-value{color:var(--home)}
+.summary-item.charger .summary-value{color:var(--charger)}
+.summary-item.import .summary-value{color:var(--grid-in)}
+.summary-item.export .summary-value{color:var(--grid-out)}
+.summary-item.solar .summary-value,.summary-item.self .summary-value{color:var(--solar)}
+.summary-bar{height:3px;margin-top:5px;overflow:hidden;border-radius:2px;background:var(--line)}
+.summary-bar i{display:block;width:0;height:100%;border-radius:2px;background:var(--solar)}
+.summary-note{grid-column:1/-1;color:var(--mute);font-size:11px}
+@media(max-width:700px){.summary{grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}.summary-item{padding:6px 7px}.summary-value{font-size:15px}}
 </style>
 </head>
 <body>
@@ -73,6 +87,20 @@ for (const m of M) {
   m.cv = s.querySelector('canvas'); m.ctx = m.cv.getContext('2d');
   if (m.h) m.cv.style.height = m.h + 'px';
   m.val = s.querySelector('.val'); m.sub = s.querySelector('.sub');
+  if (m.balance) {
+    const summary = document.createElement('div');
+    summary.className = 'summary';
+    summary.innerHTML = `<span class="summary-title"></span>
+      <div class="summary-item home"><span class="summary-label">Huis</span><span class="summary-value">–</span></div>
+      <div class="summary-item charger"><span class="summary-label">Auto laden</span><span class="summary-value">–</span></div>
+      <div class="summary-item import"><span class="summary-label">Netafname</span><span class="summary-value">–</span></div>
+      <div class="summary-item export"><span class="summary-label">Injectie</span><span class="summary-value">–</span></div>
+      <div class="summary-item solar"><span class="summary-label">Zon opgewekt</span><span class="summary-value">–</span></div>
+      <div class="summary-item self"><span class="summary-label">Zelfverbruik zon</span><span class="summary-value">–</span><div class="summary-bar"><i></i></div></div>
+      <span class="summary-note">Energie over de geselecteerde periode · ≈ geeft onvolledige meetdekking aan</span>`;
+    s.appendChild(summary);
+    m.summary = summary;
+  }
   const move = e => { const r = m.cv.getBoundingClientRect(); cursor = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)); render(); };
   const leave = () => { cursor = null; render(); };
   m.cv.addEventListener('pointermove', move);
@@ -149,6 +177,49 @@ const fmtL = l => l == null ? '–' : l >= 1000 ? nl(l / 1000, 2) + ' m³' : (l 
 const RANGE_NL = {900:'15 min', 3600:'1 uur', 21600:'6 uur', 86400:'24 uur'};
 const BUCKET = {900:60, 3600:120, 21600:600, 86400:1800};         // seconden per punt van de golf
 const BUCKET_NL = {900:'1 min', 3600:'2 min', 21600:'10 min', 86400:'30 min'};
+const RANGE_SHORT_NL = {900:'15 min', 3600:'1 uur', 21600:'6 uur', 86400:'24 uur'};
+function integrate(indexes, start, end, transform = x => x) {
+  const energy = indexes.map(() => 0);
+  let seconds = 0;
+  for (let i = Math.max(0, lb(T, start) - 1); i < T.length && T[i] < end; i++) {
+    const t = T[i], next = i + 1 < T.length ? T[i + 1] : end;
+    const a = Math.max(start, t), b = Math.min(end, t + Math.min(next - t, GAP));
+    if (b <= a || indexes.some(j => V[j][i] == null)) continue;
+    const duration = b - a;
+    for (let j = 0; j < indexes.length; j++) energy[j] += transform(V[indexes[j]][i], j) * duration / 3600000;
+    seconds += duration;
+  }
+  return {energy, seconds};
+}
+function renderSummary() {
+  const m = M.find(x => x.balance), el = m.summary, start = now - span;
+  el.querySelector('.summary-title').textContent = 'Verbruik en opwekking · laatste ' + RANGE_SHORT_NL[span];
+  const house = hasCharger ? integrate([3, 2], start, now) : integrate([3], start, now);
+  const charger = hasCharger ? house.energy[1] : 0;
+  const houseEnergy = house.energy[0];
+  const houseCoverage = house.seconds;
+  const grid = integrate([0], start, now, (v, i) => Math.max(0, v));
+  const exported = integrate([0], start, now, (v, i) => Math.max(0, -v));
+  const solar = integrate([1], start, now);
+  const paired = integrate([0, 1], start, now, (v, i) => i === 0 ? Math.max(0, -v) : v);
+  const generated = paired.energy[1], injected = paired.energy[0];
+  const selfUse = generated > 0
+    ? Math.max(0, Math.min(100, (generated - injected) / generated * 100))
+    : null;
+  const energyText = (kWh, covered) => {
+    if (covered <= 0) return '–';
+    const value = kWh;
+    return (covered < span * .99 ? '≈' : '') + (value < 10 ? nl(value, 2) : nl(value, 1)) + ' kWh';
+  };
+  const values = el.querySelectorAll('.summary-value');
+  values[0].textContent = energyText(houseEnergy, houseCoverage);
+  values[1].textContent = hasCharger ? energyText(charger, houseCoverage) : '0,00 kWh';
+  values[2].textContent = energyText(grid.energy[0], grid.seconds);
+  values[3].textContent = energyText(exported.energy[0], exported.seconds);
+  values[4].textContent = energyText(solar.energy[0], solar.seconds);
+  values[5].textContent = selfUse == null ? '–' : (paired.seconds < span * .99 ? '≈' : '') + Math.round(selfUse) + ' %';
+  el.querySelector('.summary-bar i').style.width = (selfUse == null ? 0 : selfUse) + '%';
+}
 // De watermeter meldt zich maar om de wInt seconden. Het verbruik van zo'n melding is
 // verdeeld over het interval ervoor; na de laatste melding is het verbruik nog onbekend.
 function waterBuckets() {
@@ -223,6 +294,7 @@ function renderPeak() {
 }
 function render() {
   renderPeak();
+  renderSummary();
   const css = getComputedStyle(document.documentElement);
   const col = n => css.getPropertyValue(n).trim();
   const ct = cursor == null ? null : now - span + cursor * span;

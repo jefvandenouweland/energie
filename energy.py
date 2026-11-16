@@ -290,7 +290,7 @@ def poller(name: str, read) -> None:
                     ok = True
         except Exception as e:  # noqa: BLE001 - keep polling whatever happens
             if ok is not False:
-                log(f"{name}: ERROR {e}")
+                log(f"{name}: ERROR {type(e).__name__}: {e}")
                 ok = False
         time.sleep(max(0.05, intervals.get(name, 1.0) - (time.monotonic() - t0)))
 
