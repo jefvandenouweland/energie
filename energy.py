@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import gzip
 import json
+import math
 import os
 import signal
 import socket
@@ -46,6 +47,10 @@ peak_info: dict = {}        # monthly peak (capacity tariff) from the P1: w, at 
 soc_events: list = []       # [(timestamp, percent)] battery charge of the car, newest last
 soc_on = False              # BMW CarData configured
 soc_path = None
+car_position: tuple = None  # (timestamp, latitude, longitude), in memory only
+reference_position: tuple = None  # (latitude, longitude), from config
+reference_name = "referentiepunt"
+position_path = None
 lock = threading.Lock()
 io_lock = threading.Lock()
 sources: dict = {}          # configured source name -> read() function
@@ -272,6 +277,51 @@ def make_sma(cfg: dict):
     return read
 
 
+def poll_interval(cfg: dict, default: float, name: str) -> float:
+    value = cfg.get("interval", default)
+    if isinstance(value, bool):
+        sys.exit(f'{name} "interval" must be a number of seconds >= 0.1')
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        sys.exit(f'{name} "interval" must be a number of seconds >= 0.1')
+    if not math.isfinite(value) or value < 0.1:
+        sys.exit(f'{name} "interval" must be a number of seconds >= 0.1')
+    return value
+
+
+def water_report_interval(cfg) -> int:
+    if isinstance(cfg, dict):
+        value = cfg.get("report_interval", cfg.get("interval", 300))
+    else:
+        value = 300
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 1:
+        sys.exit('HomeWizard "water.report_interval" must be a number of seconds >= 1')
+    return int(value)
+
+
+def parse_reference_position(cfg: dict) -> tuple:
+    bmw_cfg = cfg.get("bmw") or {}
+    if "home" not in bmw_cfg and "reference_position" not in cfg:
+        return None, "referentiepunt"
+    try:
+        if "home" in bmw_cfg:
+            position = bmw_cfg["home"]
+            if not isinstance(position, str) or len(position.split(",")) != 2:
+                raise ValueError
+            latitude, longitude = map(float, position.split(","))
+            name = "Home"
+        else:
+            legacy = cfg["reference_position"]
+            latitude, longitude = float(legacy["latitude"]), float(legacy["longitude"])
+            name = str(legacy.get("name") or "Home")
+    except (KeyError, TypeError, ValueError):
+        sys.exit('"bmw.home" must be "latitude,longitude" (or use the legacy "reference_position" object)')
+    if not math.isfinite(latitude) or not math.isfinite(longitude) or not -90 <= latitude <= 90 or not -180 <= longitude <= 180:
+        sys.exit('"bmw.home" latitude must be between -90 and 90 and longitude between -180 and 180')
+    return (latitude, longitude), name
+
+
 def poller(name: str, read) -> None:
     ok = None
     while True:
@@ -334,6 +384,41 @@ def sampler() -> None:
 
 
 # --------------------------------------------------------------------------- car battery (BMW CarData)
+def position_add(ts: float, latitude: float, longitude: float) -> None:
+    global car_position
+    with lock:
+        if car_position is not None and ts < car_position[0]:
+            return
+    if position_path:
+        with io_lock:
+            tmp = position_path.with_suffix(".tmp")
+            tmp.write_text(json.dumps([ts, latitude, longitude]) + "\n")
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, position_path)
+    with lock:
+        if car_position is None or ts >= car_position[0]:
+            car_position = (ts, latitude, longitude)
+
+
+def position_load(path: Path) -> None:
+    global car_position, position_path
+    position_path = path
+    try:
+        row = json.loads(path.read_text())
+        ts, latitude, longitude = float(row[0]), float(row[1]), float(row[2])
+    except FileNotFoundError:
+        return
+    except (IndexError, KeyError, TypeError, ValueError) as e:
+        log(f"ignoring invalid saved car location in {path}: {e}")
+        return
+    if not all(map(math.isfinite, (ts, latitude, longitude))) or not -90 <= latitude <= 90 or not -180 <= longitude <= 180:
+        log(f"ignoring invalid saved car location in {path}: coordinates out of range")
+        return
+    with lock:
+        car_position = (ts, latitude, longitude)
+    log(f"loaded last car location from {path}")
+
+
 def soc_add(ts: float, value: float, key: str = "") -> None:
     ts = int(ts)
     with lock:
@@ -434,6 +519,14 @@ def extras(history: bool = False) -> dict:
     with lock:
         out = {"peak": {k: peak_info.get(k) for k in ("w", "at", "avg")} if peak_info else None,
                "soc_on": soc_on, "soc_last": list(soc_events[-1]) if soc_events else None}
+        if car_position and reference_position:
+            ts, latitude, longitude = car_position
+            lat1, lon1 = map(math.radians, reference_position)
+            lat2, lon2 = math.radians(latitude), math.radians(longitude)
+            dlat, dlon = lat2 - lat1, lon2 - lon1
+            a = math.sin(dlat / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2) ** 2
+            out["car_distance"] = {"km": 6371.0088 * 2 * math.asin(math.sqrt(min(1.0, a))),
+                                   "at": int(ts), "name": reference_name}
         if history and soc_on:
             cutoff = time.time() - WINDOW
             ev = [list(e) for e in soc_events if e[0] > cutoff]
@@ -552,26 +645,35 @@ class Server(ThreadingHTTPServer):
 
 # --------------------------------------------------------------------------- main
 def main() -> None:
-    global soc_on
+    global soc_on, reference_position, reference_name
     cfg_path = Path(sys.argv[1]) if len(sys.argv) > 1 else HERE / "config.json"
     cfg = json.loads(cfg_path.read_text())
+    reference_position, reference_name = parse_reference_position(cfg)
 
-    p1 = P1(cfg["homewizard"]) if "homewizard" in cfg else None
+    homewizard_cfg = cfg.get("homewizard")
+    p1 = P1(homewizard_cfg) if homewizard_cfg else None
     if p1:
+        intervals["grid"] = poll_interval(homewizard_cfg, 1, "homewizard")
         sources["grid"] = make_grid(p1)
     if "sma" in cfg:
+        intervals["solar"] = poll_interval(cfg["sma"], 1, "sma")
         sources["solar"] = make_sma(cfg["sma"])
     if "alfen" in cfg:
+        intervals["charger"] = poll_interval(cfg["alfen"], 10, "alfen")  # be gentle with the charger
         sources["charger"] = make_alfen(cfg["alfen"])
-        intervals["charger"] = float(cfg["alfen"].get("interval", 10))  # be gentle with the charger
-    if cfg.get("water"):
+    water_cfg = homewizard_cfg.get("water") if homewizard_cfg else None
+    if water_cfg is None and cfg.get("water"):  # accept the former top-level setting
+        water_cfg = cfg["water"]
+    if water_cfg is not None and water_cfg is not False:
+        if not isinstance(water_cfg, (bool, dict)):
+            sys.exit('HomeWizard "water" must be an object or true')
         if not p1:
-            sys.exit('"water" is read from the P1 meter, so "homewizard" is required')
+            sys.exit('"homewizard" is required to read its nested water meter')
+        intervals["water"] = poll_interval(homewizard_cfg, 1, "homewizard")
+        water_info["interval"] = water_report_interval(water_cfg)
         sources["water"] = make_water(p1)
-        if isinstance(cfg["water"], dict):  # seconds between two reports of the water meter
-            water_info["interval"] = int(cfg["water"].get("interval", 300))
     if not sources and "bmw" not in cfg:
-        sys.exit("config has none of: homewizard, sma, alfen, water, bmw")
+        sys.exit("config has none of: homewizard, sma, alfen, bmw")
 
     data_dir = Path(cfg.get("data_dir") or os.environ.get("STATE_DIRECTORY") or HERE / "data")
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -587,7 +689,10 @@ def main() -> None:
         import bmw
         soc_on = True
         soc_load(data_dir / "soc.jsonl")
-        stream = bmw.Stream(cfg["bmw"], bmw.Tokens(cfg["bmw"], data_dir / "bmw-tokens.json"), soc_add, log)
+        if reference_position:
+            position_load(data_dir / "car-position.json")
+        stream = bmw.Stream(cfg["bmw"], bmw.Tokens(cfg["bmw"], data_dir / "bmw-tokens.json"),
+                            soc_add, log, position_add if reference_position else None)
         threading.Thread(target=stream.run, daemon=True).start()
     for name, read in sources.items():
         threading.Thread(target=poller, args=(name, read), daemon=True).start()

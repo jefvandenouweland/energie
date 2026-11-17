@@ -24,7 +24,8 @@ h1{font-size:18px;margin:0}
 .dot{width:9px;height:9px;border-radius:50%;background:var(--mute)}
 .dot.on{background:var(--grid-out)}.dot.off{background:var(--grid-in)}
 #warn{color:var(--grid-in);font-size:13px;flex:1}
-nav{display:flex;gap:4px;margin-left:auto}
+nav{display:flex;gap:4px}
+#language{margin-left:auto}
 nav button{font:inherit;font-size:13px;padding:4px 10px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--fg);cursor:pointer}
 nav button.on{background:var(--fg);color:var(--bg);border-color:var(--fg)}
 main{display:grid;gap:12px;padding:12px 14px 20px;max-width:1200px;margin:auto;grid-template-columns:repeat(auto-fit,minmax(min(100%,520px),1fr))}
@@ -57,29 +58,79 @@ canvas{display:block;width:100%;height:170px;touch-action:pan-y}
 </head>
 <body>
 <header>
-  <h1>Energie</h1><span id="dot" class="dot" title="verbinding"></span><span id="warn"></span>
-  <nav id="range"></nav>
+  <h1 id="app-title">Energie</h1><span id="dot" class="dot" title="verbinding"></span><span id="warn"></span>
+  <nav id="language" aria-label="Language"></nav><nav id="range"></nav>
 </header>
 <main id="charts"></main>
 <script>
 "use strict";
 const GAP = 35;                      // seconden zonder data waarna de lijn onderbroken wordt
 const MAX_AGE_UI = 5;
+const TEXT = {
+  nl: {
+    connection:'verbinding', balance:'Energiebalans', grid:'Net', solar:'Zon', carBattery:'Auto batterij', water:'Water', peak:'Maandpiek',
+    gridNote:'+ afname · − injectie', solarNote:'productie',
+    house:'huis', carCharging:'Auto laden', gridImport:'Netafname', gridExport:'Injectie', solarGenerated:'Zon opgewekt', selfConsumption:'Zelfverbruik zon',
+    summaryTitle:'Verbruik en opwekking · laatste {0}', summaryNote:'Energie over de geselecteerde periode · ≈ geeft onvolledige meetdekking aan',
+    noData:'geen data', noSources:'Geen data: {0}', noUsage:'geen verbruik te berekenen', missing:'ontbreekt', conjunction:' en ',
+    homeAndCharger:'huis + laadpaal {0} (laadpaal onbekend)', powerUse:'verbruik', fromGrid:'afname van het net', toGrid:'injectie op het net',
+    socWait:'wacht op melding van de auto', updated:'bijgewerkt {0}', ago:'{0} geleden', days:'{0} d', hours:'{0} u',
+    distanceFrom:'{0} km van {1}', location:'locatie {0}', lastReport:'laatste melding {0}',
+    waterWait:'wacht op eerste meting', measurementEvery:'laatste {0} · meting elke {1}, laatst {2} · per {3}',
+    waterNotReported:'nog niet gemeld', perBucket:'per {0}', waitingMeasurement:'wacht op meting',
+    peakHighest:'hoogste kwartier deze maand', peakAt:'om {0}', quarterAverage:'Dit kwartier gemiddeld {0}', ofPeak:'{0} % van je piek', newPeak:'nieuwe piek!',
+    ranges:{900:'15 min',3600:'1 uur',21600:'6 uur',86400:'24 uur'},
+    shortRanges:{900:'15 min',3600:'1 uur',21600:'6 uur',86400:'24 uur'},
+    buckets:{900:'1 min',3600:'2 min',21600:'10 min',86400:'30 min'},
+    rangeButtons:{900:'15m',3600:'1u',21600:'6u',86400:'24u'}
+  },
+  en: {
+    connection:'connection', balance:'Energy balance', grid:'Grid', solar:'Solar', carBattery:'Car battery', water:'Water', peak:'Monthly peak',
+    gridNote:'+ import · − export', solarNote:'production',
+    house:'home', carCharging:'Car charging', gridImport:'Grid import', gridExport:'Grid export', solarGenerated:'Solar generated', selfConsumption:'Solar self-use',
+    summaryTitle:'Usage and generation · last {0}', summaryNote:'Energy for the selected period · ≈ indicates incomplete measurement coverage',
+    noData:'no data', noSources:'No data: {0}', noUsage:'cannot calculate usage', missing:'missing', conjunction:' and ',
+    homeAndCharger:'home + charger {0} (charger unknown)', powerUse:'usage', fromGrid:'grid import', toGrid:'grid export',
+    socWait:'waiting for a report from the car', updated:'updated {0}', ago:'{0} ago', days:'{0} d', hours:'{0} h',
+    distanceFrom:'{0} km from {1}', location:'location {0}', lastReport:'last report {0}',
+    waterWait:'waiting for first reading', measurementEvery:'last {0} · reading every {1}, latest {2} · per {3}',
+    waterNotReported:'not reported yet', perBucket:'per {0}', waitingMeasurement:'waiting for reading',
+    peakHighest:'highest quarter-hour average this month', peakAt:'at {0}', quarterAverage:'Current quarter average {0}', ofPeak:'{0} % of peak', newPeak:'new peak!',
+    ranges:{900:'15 min',3600:'1 hour',21600:'6 hours',86400:'24 hours'},
+    shortRanges:{900:'15 min',3600:'1 hour',21600:'6 hours',86400:'24 hours'},
+    buckets:{900:'1 min',3600:'2 min',21600:'10 min',86400:'30 min'},
+    rangeButtons:{900:'15m',3600:'1h',21600:'6h',86400:'24h'}
+  }
+};
+let language = (() => {
+  try {
+    const saved = localStorage.getItem('energy-language');
+    if (saved === 'en' || saved === 'nl') return saved;
+  } catch { /* use the browser language when storage is unavailable */ }
+  return navigator.language.toLowerCase().startsWith('en') ? 'en' : 'nl';
+})();
+const tr = (key, ...args) => {
+  let s = TEXT[language][key];
+  for (let i = 0; i < args.length; i++) s = s.replace(`{${i}}`, args[i]);
+  return s;
+};
 // V-indexen: 0 net (W), 1 zon (W), 2 laadpaal (W), 3 huis (W), 4 water (mL verbruikt per sample)
 const M = [
-  {k:'balance', name:'Energiebalans', stack:true, balance:true, signed:true, wide:true, h:270},
-  {k:'grid',  i:0, name:'Net',  note:'+ afname · − injectie', signed:true},
-  {k:'solar', i:1, name:'Zon',  note:'productie'},
-  {k:'soc', name:'Auto batterij', soc:true, hidden:true, tick: v => v + '%'},
-  {k:'water', i:4, name:'Water', water:true, tick: v => String(+v.toFixed(1)).replace('.', ',')},
+  {k:'balance', nameKey:'balance', stack:true, balance:true, signed:true, wide:true, h:270},
+  {k:'grid',  i:0, nameKey:'grid',  noteKey:'gridNote', signed:true},
+  {k:'solar', i:1, nameKey:'solar',  noteKey:'solarNote'},
+  {k:'soc', nameKey:'carBattery', soc:true, hidden:true, tick: v => v + '%'},
+  {k:'water', i:4, nameKey:'water', water:true, tick: v => String(+v.toFixed(1)).replace('.', language === 'nl' ? ',' : '.')},
 ];
-const SRC_NL = {grid:'net', solar:'zon', charger:'laadpaal', water:'water'};
-const RANGES = [['15m',900],['1u',3600],['6u',21600],['24u',86400]];
-let T = [], V = [[],[],[],[],[]], since = null, now = Date.now()/1000, span = 900, cursor = null, wAt = null, wInt = 300, hasCharger = false, hasGrid = false, hasSolar = false, S = [], socOn = false, peak = null;
+const SRC_KEY = {grid:'grid', solar:'solar', charger:'chargerSource', water:'water'};
+TEXT.nl.chargerSource = 'laadpaal'; TEXT.en.chargerSource = 'charger';
+const RANGES = [900,3600,21600,86400];
+let T = [], V = [[],[],[],[],[]], since = null, now = Date.now()/1000, span = 900, cursor = null, wAt = null, wInt = 300, hasCharger = false, hasGrid = false, hasSolar = false, S = [], socOn = false, peak = null, carDistance = null;
 
 // ---- DOM
 const main = document.getElementById('charts');
 for (const m of M) {
+  m.name = tr(m.nameKey);
   const s = document.createElement('section');
   if (m.wide) s.className = 'wide';
   s.innerHTML = `<div class="head"><span class="name">${m.name}</span><span class="sub"></span><span class="val">–</span></div><canvas></canvas>`;
@@ -91,13 +142,13 @@ for (const m of M) {
     const summary = document.createElement('div');
     summary.className = 'summary';
     summary.innerHTML = `<span class="summary-title"></span>
-      <div class="summary-item home"><span class="summary-label">Huis</span><span class="summary-value">–</span></div>
-      <div class="summary-item charger"><span class="summary-label">Auto laden</span><span class="summary-value">–</span></div>
-      <div class="summary-item import"><span class="summary-label">Netafname</span><span class="summary-value">–</span></div>
-      <div class="summary-item export"><span class="summary-label">Injectie</span><span class="summary-value">–</span></div>
-      <div class="summary-item solar"><span class="summary-label">Zon opgewekt</span><span class="summary-value">–</span></div>
-      <div class="summary-item self"><span class="summary-label">Zelfverbruik zon</span><span class="summary-value">–</span><div class="summary-bar"><i></i></div></div>
-      <span class="summary-note">Energie over de geselecteerde periode · ≈ geeft onvolledige meetdekking aan</span>`;
+      <div class="summary-item home"><span class="summary-label" data-label="house"></span><span class="summary-value">–</span></div>
+      <div class="summary-item charger"><span class="summary-label" data-label="carCharging"></span><span class="summary-value">–</span></div>
+      <div class="summary-item import"><span class="summary-label" data-label="gridImport"></span><span class="summary-value">–</span></div>
+      <div class="summary-item export"><span class="summary-label" data-label="gridExport"></span><span class="summary-value">–</span></div>
+      <div class="summary-item solar"><span class="summary-label" data-label="solarGenerated"></span><span class="summary-value">–</span></div>
+      <div class="summary-item self"><span class="summary-label" data-label="selfConsumption"></span><span class="summary-value">–</span><div class="summary-bar"><i></i></div></div>
+      <span class="summary-note" data-label="summaryNote"></span>`;
     s.appendChild(summary);
     m.summary = summary;
   }
@@ -109,14 +160,38 @@ for (const m of M) {
 }
 const pk = document.createElement('section');
 pk.className = 'wide'; pk.id = 'peak'; pk.style.display = 'none';
-pk.innerHTML = `<div class="head"><span class="name">Maandpiek</span><span class="sub"></span><span class="val">–</span></div><div class="bar"><i></i></div><div class="note"></div>`;
+pk.innerHTML = `<div class="head"><span class="name" data-label="peak"></span><span class="sub"></span><span class="val">–</span></div><div class="bar"><i></i></div><div class="note"></div>`;
 main.appendChild(pk);
 const nav = document.getElementById('range');
-for (const [label, secs] of RANGES) {
-  const b = document.createElement('button'); b.textContent = label;
+for (const secs of RANGES) {
+  const b = document.createElement('button'); b.dataset.seconds = secs;
   b.className = secs === span ? 'on' : '';
   b.onclick = () => { span = secs; for (const x of nav.children) x.className = x === b ? 'on' : ''; render(); };
   nav.appendChild(b);
+}
+const languageNav = document.getElementById('language');
+for (const code of ['nl', 'en']) {
+  const b = document.createElement('button'); b.textContent = code.toUpperCase(); b.dataset.language = code;
+  b.onclick = () => setLanguage(code);
+  languageNav.appendChild(b);
+}
+function setLanguage(code) {
+  language = code;
+  document.documentElement.lang = code;
+  document.title = code === 'nl' ? 'Energie' : 'Energy';
+  document.getElementById('app-title').textContent = document.title;
+  document.querySelector('meta[name="apple-mobile-web-app-title"]').content = document.title;
+  document.getElementById('dot').title = tr('connection');
+  for (const m of M) {
+    m.name = tr(m.nameKey);
+    if (m.noteKey) m.note = tr(m.noteKey);
+    m.sec.querySelector('.name').textContent = m.name;
+  }
+  for (const el of document.querySelectorAll('[data-label]')) el.textContent = tr(el.dataset.label);
+  for (const b of nav.children) b.textContent = TEXT[language].rangeButtons[b.dataset.seconds];
+  for (const b of languageNav.children) b.className = b.dataset.language === language ? 'on' : '';
+  try { localStorage.setItem('energy-language', code); } catch { /* language still changes for this page */ }
+  render();
 }
 
 // ---- data
@@ -131,6 +206,7 @@ async function loadHistory() {
 }
 function extras(d) {
   socOn = !!d.soc_on; peak = d.peak || null;
+  carDistance = d.car_distance || null;
   const l = d.soc_last;
   if (l && (!S.length || l[0] > S[S.length - 1][0])) S.push(l);
 }
@@ -138,8 +214,8 @@ function setSrc(src) {
   for (const m of M) if (m.soc) { m.hidden = !socOn; m.sec.style.display = m.hidden ? 'none' : ''; }
   hasCharger = 'charger' in src; hasGrid = 'grid' in src; hasSolar = 'solar' in src;
   for (const m of M) if (m.k === 'water') { m.hidden = !('water' in src); m.sec.style.display = m.hidden ? 'none' : ''; }
-  const bad = Object.keys(src).filter(k => !src[k]).map(k => SRC_NL[k] || k);
-  document.getElementById('warn').textContent = bad.length ? 'Geen data: ' + bad.join(', ') : '';
+  const bad = Object.keys(src).filter(k => !src[k]).map(k => tr(SRC_KEY[k] || k));
+  document.getElementById('warn').textContent = bad.length ? tr('noSources', bad.join(', ')) : '';
 }
 function trim() {
   const cutoff = now - 86400; let n = 0;
@@ -167,17 +243,15 @@ async function tick() {
 // ---- helpers
 const hexA = (c, a) => { const n = parseInt(c.slice(1), 16); return `rgba(${n >> 16 & 255},${n >> 8 & 255},${n & 255},${a})`; };
 const lb = (a, x) => { let lo = 0, hi = a.length; while (lo < hi) { const m = (lo+hi) >> 1; if (a[m] < x) lo = m+1; else hi = m; } return lo; };
-const nl = (x, d) => x.toFixed(d).replace('.', ',');
-const fmt = v => v == null ? '–' : Math.abs(v) >= 1000 ? nl(v/1000, 2) + ' kW' : Math.round(v) + ' W';
-const fmtTick = v => Math.abs(v) >= 1000 ? String(+(v/1000).toFixed(1)).replace('.', ',') + 'k' : String(Math.round(v));
+const decimal = (x, d) => new Intl.NumberFormat(language === 'nl' ? 'nl-BE' : 'en-GB', {minimumFractionDigits:d, maximumFractionDigits:d}).format(x);
+const fmt = v => v == null ? '–' : Math.abs(v) >= 1000 ? decimal(v/1000, 2) + ' kW' : Math.round(v) + ' W';
+const fmtTick = v => Math.abs(v) >= 1000 ? decimal(v/1000, 1) + 'k' : String(Math.round(v));
 const niceStep = r => { const p = Math.pow(10, Math.floor(Math.log10(r))), f = r / p; return (f < 1.5 ? 1 : f < 3.5 ? 2 : f < 7.5 ? 5 : 10) * p; };
-const hhmm = t => new Date(t*1000).toLocaleTimeString('nl-BE', {hour:'2-digit', minute:'2-digit'});
-const stamp = t => new Date(t*1000).toLocaleString('nl-BE', {weekday:'short', hour:'2-digit', minute:'2-digit', second:'2-digit'});
-const fmtL = l => l == null ? '–' : l >= 1000 ? nl(l / 1000, 2) + ' m³' : (l < 10 ? nl(l, 1) : Math.round(l)) + ' L';
-const RANGE_NL = {900:'15 min', 3600:'1 uur', 21600:'6 uur', 86400:'24 uur'};
+const locale = () => language === 'nl' ? 'nl-BE' : 'en-GB';
+const hhmm = t => new Date(t*1000).toLocaleTimeString(locale(), {hour:'2-digit', minute:'2-digit'});
+const stamp = t => new Date(t*1000).toLocaleString(locale(), {weekday:'short', hour:'2-digit', minute:'2-digit', second:'2-digit'});
+const fmtL = l => l == null ? '–' : l >= 1000 ? decimal(l / 1000, 2) + ' m³' : (l < 10 ? decimal(l, 1) : Math.round(l)) + ' L';
 const BUCKET = {900:60, 3600:120, 21600:600, 86400:1800};         // seconden per punt van de golf
-const BUCKET_NL = {900:'1 min', 3600:'2 min', 21600:'10 min', 86400:'30 min'};
-const RANGE_SHORT_NL = {900:'15 min', 3600:'1 uur', 21600:'6 uur', 86400:'24 uur'};
 function integrate(indexes, start, end, transform = x => x) {
   const energy = indexes.map(() => 0);
   let seconds = 0;
@@ -193,7 +267,7 @@ function integrate(indexes, start, end, transform = x => x) {
 }
 function renderSummary() {
   const m = M.find(x => x.balance), el = m.summary, start = now - span;
-  el.querySelector('.summary-title').textContent = 'Verbruik en opwekking · laatste ' + RANGE_SHORT_NL[span];
+  el.querySelector('.summary-title').textContent = tr('summaryTitle', TEXT[language].shortRanges[span]);
   const house = hasCharger ? integrate([3, 2], start, now) : integrate([3], start, now);
   const charger = hasCharger ? house.energy[1] : 0;
   const houseEnergy = house.energy[0];
@@ -209,11 +283,11 @@ function renderSummary() {
   const energyText = (kWh, covered) => {
     if (covered <= 0) return '–';
     const value = kWh;
-    return (covered < span * .99 ? '≈' : '') + (value < 10 ? nl(value, 2) : nl(value, 1)) + ' kWh';
+    return (covered < span * .99 ? '≈' : '') + (value < 10 ? decimal(value, 2) : decimal(value, 1)) + ' kWh';
   };
   const values = el.querySelectorAll('.summary-value');
   values[0].textContent = energyText(houseEnergy, houseCoverage);
-  values[1].textContent = hasCharger ? energyText(charger, houseCoverage) : '0,00 kWh';
+  values[1].textContent = hasCharger ? energyText(charger, houseCoverage) : decimal(0, 2) + ' kWh';
   values[2].textContent = energyText(grid.energy[0], grid.seconds);
   values[3].textContent = energyText(exported.energy[0], exported.seconds);
   values[4].textContent = energyText(solar.energy[0], solar.seconds);
@@ -281,16 +355,16 @@ function renderPeak() {
   const mt = (peak.at || '').match(/^(\d+)-(\d+)-(\d+)T(\d+):(\d+)/);
   if (mt) {
     const d = new Date(+mt[1], mt[2] - 1, +mt[3], +mt[4], +mt[5]);
-    when = ' · ' + d.toLocaleDateString('nl-BE', {weekday:'short', day:'numeric', month:'short'}) + ' om ' + d.toLocaleTimeString('nl-BE', {hour:'2-digit', minute:'2-digit'});
+    when = ' · ' + d.toLocaleDateString(locale(), {weekday:'short', day:'numeric', month:'short'}) + ' ' + tr('peakAt', d.toLocaleTimeString(locale(), {hour:'2-digit', minute:'2-digit'}));
   }
   el.querySelector('.val').textContent = fmt(peak.w);
-  el.querySelector('.sub').textContent = 'hoogste kwartier deze maand' + when;
+  el.querySelector('.sub').textContent = tr('peakHighest') + when;
   const bar = el.querySelector('.bar i'), note = el.querySelector('.note');
   if (peak.avg == null) { bar.style.width = '0'; bar.className = ''; note.textContent = ''; return; }
   const r = peak.w > 0 ? peak.avg / peak.w : 0;
   bar.style.width = Math.min(100, r * 100) + '%';
   bar.className = r > 1 ? 'over' : r >= .9 ? 'hot' : '';
-  note.textContent = 'Dit kwartier gemiddeld ' + fmt(peak.avg) + (peak.w > 0 ? ' (' + Math.round(r * 100) + ' % van je piek)' : '') + (r > 1 ? ' · nieuwe piek!' : '');
+  note.textContent = tr('quarterAverage', fmt(peak.avg)) + (peak.w > 0 ? ' (' + tr('ofPeak', Math.round(r * 100)) + ')' : '') + (r > 1 ? ' · ' + tr('newPeak') : '');
 }
 function render() {
   renderPeak();
@@ -308,39 +382,46 @@ function render() {
       n = lb(T, ct); if (n > 0 && (n === T.length || ct - T[n-1] < T[n] - ct)) n--;
       if (!(n >= 0 && n < T.length && Math.abs(T[n] - ct) <= GAP)) n = -1;
     }
-    const when = ct == null ? '' : (n >= 0 ? stamp(T[n]) : hhmm(ct) + ' · geen data');
+    const when = ct == null ? '' : (n >= 0 ? stamp(T[n]) : hhmm(ct) + ' · ' + tr('noData'));
     if (m.soc) {
       const last = S.length ? S[S.length - 1] : null;
       if (ct == null) {
         m.val.textContent = last ? Math.round(last[1]) + ' %' : '–';
         const age = last ? now - last[0] : 0;
-        m.sub.textContent = !last ? 'wacht op melding van de auto'
-          : 'bijgewerkt ' + hhmm(last[0]) + (age > 3600 ? ' (' + (age >= 86400 ? Math.round(age / 86400) + ' d' : Math.round(age / 3600) + ' u') + ' geleden)' : '');
+        const ageText = (seconds) => tr('ago', seconds >= 86400 ? tr('days', Math.round(seconds / 86400)) : tr('hours', Math.round(seconds / 3600)));
+        const socSub = !last ? tr('socWait')
+          : tr('updated', hhmm(last[0])) + (age > 3600 ? ' (' + ageText(age) + ')' : '');
+        const distanceSub = carDistance ? tr('distanceFrom', decimal(carDistance.km, 1),
+          carDistance.name.toLowerCase() === 'home' ? tr('house') : carDistance.name)
+          + ' · ' + tr('location', hhmm(carDistance.at))
+          + (now - carDistance.at > 3600 ? ' (' + ageText(now - carDistance.at) + ')' : '') : '';
+        m.sub.textContent = [socSub, distanceSub].filter(Boolean).join(' · ');
       } else {
         const i = lb(S.map(e => e[0]), ct + 1) - 1;
         m.val.textContent = i < 0 ? '–' : Math.round(S[i][1]) + ' %';
-        m.sub.textContent = i < 0 ? hhmm(ct) + ' · geen data' : 'laatste melding ' + stamp(S[i][0]);
+        m.sub.textContent = i < 0 ? hhmm(ct) + ' · ' + tr('noData') : tr('lastReport', stamp(S[i][0]));
       }
     } else if (m.water) {
-      if (wb.wat == null) { m.val.textContent = '–'; m.sub.textContent = 'wacht op eerste meting'; }
+      if (wb.wat == null) { m.val.textContent = '–'; m.sub.textContent = tr('waterWait'); }
       else if (ct == null) {
         m.val.textContent = fmtL(wb.total / 1000);
-        m.sub.textContent = 'laatste ' + RANGE_NL[span] + ' · meting elke ' + (wInt % 60 ? wInt + ' s' : wInt / 60 + ' min') + ', laatst ' + hhmm(wb.wat) + ' · per ' + BUCKET_NL[span];
+        const intervalText = wInt % 60 ? wInt + ' s' : wInt / 60 + ' min';
+        m.sub.textContent = tr('measurementEvery', TEXT[language].ranges[span], intervalText, hhmm(wb.wat), TEXT[language].buckets[span]);
       } else {
         const b = Math.floor(ct / wb.size), L = wb.byB.get(b);
         m.val.textContent = L == null ? '–' : fmtL(L);
-        m.sub.textContent = stamp(b * wb.size) + (L == null ? ' · nog niet gemeld' : ' · per ' + BUCKET_NL[span]);
+        m.sub.textContent = stamp(b * wb.size) + (L == null ? ' · ' + tr('waterNotReported') : ' · ' + tr('perBucket', TEXT[language].buckets[span]));
       }
     } else if (m.balance || m.stack) {
       const u = n < 0 ? null : usageAt(n), dot = v => `<b style="color:var(${v})">●</b>`;
-      const miss = n < 0 ? [] : [[hasGrid, V[0][n], 'net'], [hasSolar, V[1][n], 'zon']].filter(x => x[0] && x[1] == null).map(x => x[2]);
-      const split = !u ? (n < 0 ? 'geen data' : 'geen verbruik te berekenen' + (miss.length ? ': ' + miss.join(' en ') + ' ontbreekt' : ''))
-        : u.unk ? `${dot('--mute')} Huis + laadpaal ${fmt(u.total)} (laadpaal onbekend)`
-        : `${dot('--home')} Huis ${fmt(u.home)} · ${dot('--charger')} Laadpaal ${fmt(u.charger)}`;
+      const miss = n < 0 ? [] : [[hasGrid, V[0][n], tr('grid')], [hasSolar, V[1][n], tr('solar')]].filter(x => x[0] && x[1] == null).map(x => x[2]);
+      const split = !u ? (n < 0 ? tr('noData') : tr('noUsage') + (miss.length ? ': ' + miss.join(tr('conjunction')) + ' ' + tr('missing') : ''))
+        : u.unk ? `${dot('--mute')} ${tr('homeAndCharger', fmt(u.total))}`
+        : `${dot('--home')} ${tr('house')} ${fmt(u.home)} · ${dot('--charger')} ${tr('carCharging')} ${fmt(u.charger)}`;
       if (m.balance) {
         const g = n < 0 ? null : V[0][n], z = n < 0 ? null : V[1][n];
-        m.val.innerHTML = `<span style="font-size:12px;font-weight:400;color:var(--mute)">verbruik </span>${fmt(u ? u.total : null)}`;
-        m.sub.innerHTML = (when ? when + ' · ' : '') + split + ` · ${dot('--solar')} Zon ${fmt(z)} · ${dot('--grid-in')} Net ${fmt(g)}`;
+        m.val.innerHTML = `<span style="font-size:12px;font-weight:400;color:var(--mute)">${tr('powerUse')} </span>${fmt(u ? u.total : null)}`;
+        m.sub.innerHTML = (when ? when + ' · ' : '') + split + ` · ${dot('--solar')} ${tr('solar')} ${fmt(z)} · ${dot('--grid-in')} ${tr('grid')} ${fmt(g)}`;
       } else {
         m.val.textContent = fmt(u ? u.total : null);
         m.sub.innerHTML = (when ? when + ' · ' : '') + split;
@@ -348,7 +429,7 @@ function render() {
     } else {
       const v = n < 0 ? null : V[m.i][n];
       let sub = when || m.note;
-      if (!when && m.signed && v != null && Math.abs(v) >= 1) sub = v > 0 ? 'afname van het net' : 'injectie op het net';
+      if (!when && m.signed && v != null && Math.abs(v) >= 1) sub = v > 0 ? tr('fromGrid') : tr('toGrid');
       m.val.textContent = (m.fmtv || fmt)(v); m.sub.textContent = sub;
     }
   }
@@ -440,7 +521,7 @@ function draw(m, col, wb) {
     if (wb.wat != null && wb.wat < t1) {  // na de laatste melding is het verbruik nog onbekend
       const x1 = Math.max(0, (wb.wat - t0) / span * W);
       ctx.fillStyle = hexA(col('--mute'), .12); ctx.fillRect(x1, 0, W - x1, ph);
-      if (W - x1 > 110) { ctx.fillStyle = col('--mute'); ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('wacht op meting', (x1 + W) / 2, ph / 2); }
+      if (W - x1 > 110) { ctx.fillStyle = col('--mute'); ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(tr('waitingMeasurement'), (x1 + W) / 2, ph / 2); }
     }
     const P = wb.pts.map(p => [(p[0] - t0) / span * W, Y(p[1])]), n = P.length;
     if (n > 1) {
@@ -509,6 +590,7 @@ function draw(m, col, wb) {
 }
 
 window.addEventListener('resize', render);
+setLanguage(language);
 tick();
 </script>
 </body>

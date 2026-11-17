@@ -203,8 +203,14 @@ def read_packet(sock):
 
 
 class Stream:
-    def __init__(self, cfg: dict, tokens: Tokens, on_soc, log):
+    def __init__(self, cfg: dict, tokens: Tokens, on_soc, log, on_position=None):
         self.cfg, self.tokens, self.on_soc, self.log = cfg, tokens, on_soc, log
+        self.on_position = on_position
+        self.location_keys = (
+            "vehicle.cabin.infotainment.navigation.currentLocation.latitude",
+            "vehicle.cabin.infotainment.navigation.currentLocation.longitude",
+        )
+        self.location = {}
         self.keys = cfg.get("soc_keys") or SOC_KEYS
         self.rank = len(self.keys)       # rank of the key in use (lower = better)
         self.seen: set = set()
@@ -334,6 +340,26 @@ class Stream:
             ts = parse_ts(e.get("timestamp") if isinstance(e, dict) else None) or parse_ts(msg.get("timestamp")) or time.time()
             self.rank = rank
             self.on_soc(ts, v, key)
+        if self.on_position:
+            location_updated = False
+            for key, coordinate in zip(self.location_keys, ("latitude", "longitude")):
+                if key not in data:
+                    continue
+                entry = data[key]
+                try:
+                    value = float(entry.get("value") if isinstance(entry, dict) else entry)
+                except (TypeError, ValueError):
+                    continue
+                limit = 90 if coordinate == "latitude" else 180
+                if not -limit <= value <= limit:
+                    continue
+                ts = parse_ts(entry.get("timestamp") if isinstance(entry, dict) else None)
+                ts = ts or parse_ts(msg.get("timestamp")) or time.time()
+                self.location[coordinate] = (ts, value)
+                location_updated = True
+            lat, lon = self.location.get("latitude"), self.location.get("longitude")
+            if location_updated and lat and lon and abs(lat[0] - lon[0]) <= 120:
+                self.on_position(max(lat[0], lon[0]), lat[1], lon[1])
 
     def run(self) -> None:
         backoff = 20
