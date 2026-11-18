@@ -1,6 +1,6 @@
 # Energy monitor
 
-Plain Python (standard library only) that collects device readings and serves a web dashboard. The dashboard is available in English and Dutch; choose EN or NL at the top of the page.
+Plain Python (standard library only) that collects device readings and serves a web dashboard.
 
 ![Energy dashboard with realistic demo data](static/dashboard-demo.png)
 
@@ -12,7 +12,7 @@ Plain Python (standard library only) that collects device readings and serves a 
 
 The Raspberry Pi reads local meters, receives BMW CarData through BMW's cloud, stores the history, and hosts the dashboard for devices on your home network.
 
-The dashboard offers English and Dutch. Its time-range buttons select 15 minutes, 1 hour, 6 hours, or 24 hours. The energy-balance card also totals home use, car charging, grid import, grid export, and solar generation for the selected period, plus the share of solar power used directly in the home. A `≈` marks totals with gaps in the available measurements.
+The dashboard can be displayed in English or Dutch, as set in `config.json`. Its time-range buttons select 15 minutes, 1 hour, 6 hours, or 24 hours. The energy-balance card also totals home use, car charging, grid import, grid export, and solar generation for the selected period, plus the share of solar power used directly in the home. A `≈` marks totals with gaps in the available measurements.
 
 | Graph | Source | Details |
 |---|---|---|
@@ -54,7 +54,7 @@ Give each device a fixed IP address (a DHCP reservation in your router).
 cp config.example.json config.json
 ```
 
-Edit the IP addresses and credentials. Omit a device section to disable that source (a missing source counts as 0 in the "Home" calculation). Polling intervals are in seconds: HomeWizard and SMA default to 1; Alfen defaults to 10 to reduce load on the charger. Set each device's `interval` to tune it. `homewizard.water.report_interval` is different: it is the expected interval between water-meter reports, not the P1 polling rate. BMW CarData is a continuous event stream and has no polling interval. The dashboard defaults to Dutch unless the browser prefers English; its EN/NL choice is saved in that browser. Optional root keys: `port`, `bind`, `data_dir`; Alfen: `username`, `port`, `property`; SMA: `port`, `unit`, `register`, `function` (3 or 4).
+Edit the IP addresses and credentials, and set the root-level `language` to `"en"` or `"nl"` (defaults to Dutch). Omit a device section to disable that source (a missing source counts as 0 in the "Home" calculation). Polling intervals are in seconds: HomeWizard and SMA default to 1; Alfen defaults to 10 to reduce load on the charger. Set each device's `interval` to tune it. `homewizard.water.report_interval` is different: it is the expected interval between water-meter reports, not the P1 polling rate. BMW CarData is a continuous event stream and has no polling interval. Optional root keys: `port`, `bind`, `data_dir`; Alfen: `username`, `port`, `property`; SMA: `port`, `unit`, `register`, `function` (3 or 4).
 
 ## 3. Run on a laptop (try it out)
 

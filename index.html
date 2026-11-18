@@ -25,7 +25,7 @@ h1{font-size:18px;margin:0}
 .dot.on{background:var(--grid-out)}.dot.off{background:var(--grid-in)}
 #warn{color:var(--grid-in);font-size:13px;flex:1}
 nav{display:flex;gap:4px}
-#language{margin-left:auto}
+#range{margin-left:auto}
 nav button{font:inherit;font-size:13px;padding:4px 10px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--fg);cursor:pointer}
 nav button.on{background:var(--fg);color:var(--bg);border-color:var(--fg)}
 main{display:grid;gap:12px;padding:12px 14px 20px;max-width:1200px;margin:auto;grid-template-columns:repeat(auto-fit,minmax(min(100%,520px),1fr))}
@@ -59,7 +59,7 @@ canvas{display:block;width:100%;height:170px;touch-action:pan-y}
 <body>
 <header>
   <h1 id="app-title">Energie</h1><span id="dot" class="dot" title="verbinding"></span><span id="warn"></span>
-  <nav id="language" aria-label="Language"></nav><nav id="range"></nav>
+  <nav id="range" aria-label="Time range"></nav>
 </header>
 <main id="charts"></main>
 <script>
@@ -102,13 +102,7 @@ const TEXT = {
     rangeButtons:{900:'15m',3600:'1h',21600:'6h',86400:'24h'}
   }
 };
-let language = (() => {
-  try {
-    const saved = localStorage.getItem('energy-language');
-    if (saved === 'en' || saved === 'nl') return saved;
-  } catch { /* use the browser language when storage is unavailable */ }
-  return navigator.language.toLowerCase().startsWith('en') ? 'en' : 'nl';
-})();
+let language = 'nl';
 const tr = (key, ...args) => {
   let s = TEXT[language][key];
   for (let i = 0; i < args.length; i++) s = s.replace(`{${i}}`, args[i]);
@@ -169,12 +163,6 @@ for (const secs of RANGES) {
   b.onclick = () => { span = secs; for (const x of nav.children) x.className = x === b ? 'on' : ''; render(); };
   nav.appendChild(b);
 }
-const languageNav = document.getElementById('language');
-for (const code of ['nl', 'en']) {
-  const b = document.createElement('button'); b.textContent = code.toUpperCase(); b.dataset.language = code;
-  b.onclick = () => setLanguage(code);
-  languageNav.appendChild(b);
-}
 function setLanguage(code) {
   language = code;
   document.documentElement.lang = code;
@@ -189,8 +177,6 @@ function setLanguage(code) {
   }
   for (const el of document.querySelectorAll('[data-label]')) el.textContent = tr(el.dataset.label);
   for (const b of nav.children) b.textContent = TEXT[language].rangeButtons[b.dataset.seconds];
-  for (const b of languageNav.children) b.className = b.dataset.language === language ? 'on' : '';
-  try { localStorage.setItem('energy-language', code); } catch { /* language still changes for this page */ }
   render();
 }
 
@@ -203,6 +189,7 @@ async function getJSON(url) {
 async function loadHistory() {
   const d = await getJSON('/api/history');
   T = d.t; V = [d.grid, d.solar, d.charger, d.home, d.water || []]; since = d.until; now = d.now; wAt = d.water_at; wInt = d.water_interval || 300; S = d.soc || []; extras(d); setSrc(d.src);
+  setLanguage(d.language === 'en' ? 'en' : 'nl');
 }
 function extras(d) {
   socOn = !!d.soc_on; peak = d.peak || null;

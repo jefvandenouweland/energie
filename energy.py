@@ -51,6 +51,7 @@ car_position: tuple = None  # (timestamp, latitude, longitude), in memory only
 reference_position: tuple = None  # (latitude, longitude), from config
 reference_name = "referentiepunt"
 position_path = None
+dashboard_language = "nl"
 lock = threading.Lock()
 io_lock = threading.Lock()
 sources: dict = {}          # configured source name -> read() function
@@ -561,6 +562,7 @@ def history_payload() -> dict:
     out["water_at"] = int(water_info["at"]) if water_info["at"] else None
     out["water_interval"] = water_info["interval"]
     out["now"] = now
+    out["language"] = dashboard_language
     out["src"] = source_status()
     out.update(extras(history=True))
     return out
@@ -579,7 +581,7 @@ def live_payload(since: int) -> dict:
         out.reverse()
     return {"now": now, "reload": reload, "samples": out, "src": source_status(),
             "water_at": int(water_info["at"]) if water_info["at"] else None,
-            "water_interval": water_info["interval"], **extras()}
+            "water_interval": water_info["interval"], "language": dashboard_language, **extras()}
 
 
 def source_status() -> dict:
@@ -645,9 +647,12 @@ class Server(ThreadingHTTPServer):
 
 # --------------------------------------------------------------------------- main
 def main() -> None:
-    global soc_on, reference_position, reference_name
+    global soc_on, reference_position, reference_name, dashboard_language
     cfg_path = Path(sys.argv[1]) if len(sys.argv) > 1 else HERE / "config.json"
     cfg = json.loads(cfg_path.read_text())
+    dashboard_language = cfg.get("language", "nl")
+    if dashboard_language not in ("en", "nl"):
+        sys.exit('"config "language" must be "en" or "nl"')
     reference_position, reference_name = parse_reference_position(cfg)
 
     homewizard_cfg = cfg.get("homewizard")
