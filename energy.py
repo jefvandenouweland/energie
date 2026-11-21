@@ -57,6 +57,8 @@ dashboard_language = "nl"
 dashboard_appliances: dict = {}
 lock = threading.Lock()
 io_lock = threading.Lock()
+charger_poll_lock = threading.Lock()
+charger_poll_paused = False
 sources: dict = {}          # configured source name -> read() function
 
 
@@ -269,6 +271,11 @@ def make_alfen(cfg: dict):
                 st["conn"] = None
             raise
 
+    def close() -> None:
+        if st["conn"] is not None:
+            logout()
+
+    read.close = close
     return read
 
 
@@ -329,26 +336,35 @@ def parse_reference_position(cfg: dict) -> tuple:
     return (latitude, longitude), name
 
 
+def publish_reading(name: str, value):
+    if isinstance(value, dict):
+        reported = value.get(name)
+        at = time.time()
+        with lock:
+            latest.update({key: (reading, at) for key, reading in value.items()})
+        return reported
+    with lock:
+        if name in ACCUMULATE:  # volumes add up until the sampler takes them
+            acc[name] = acc.get(name, 0.0) + value
+            latest[name] = (0.0, time.time())
+        else:
+            latest[name] = (value, time.time())
+    return value
+
+
 def poller(name: str, read) -> None:
     ok = None
     while True:
         t0 = time.monotonic()
         try:
-            value = read()
+            if name == "charger":
+                with charger_poll_lock:
+                    value = None if charger_poll_paused else read()
+                    reported = None if value is None else publish_reading(name, value)
+            else:
+                value = read()
+                reported = None if value is None else publish_reading(name, value)
             if value is not None:  # None = nothing to report yet
-                if isinstance(value, dict):
-                    reported = value.get(name)
-                    at = time.time()
-                    with lock:
-                        latest.update({key: (reading, at) for key, reading in value.items()})
-                else:
-                    reported = value
-                    with lock:
-                        if name in ACCUMULATE:  # volumes add up until the sampler takes them
-                            acc[name] = acc.get(name, 0.0) + value
-                            latest[name] = (0.0, time.time())
-                        else:
-                            latest[name] = (value, time.time())
                 if ok is not True:
                     log(f"{name}: ok ({reported:g})")
                     ok = True
@@ -556,6 +572,11 @@ def extras(history: bool = False) -> dict:
     return out
 
 
+def charger_polling_state() -> dict:
+    with charger_poll_lock:
+        return {"available": "charger" in sources, "paused": charger_poll_paused}
+
+
 def three_phase_available() -> bool:
     now = time.time()
     with lock:
@@ -591,6 +612,7 @@ def history_payload() -> dict:
     out["language"] = dashboard_language
     out["three_phase"] = three_phase_available()
     out["appliances"] = dashboard_appliances
+    out["charger_polling"] = charger_polling_state()
     out["src"] = source_status()
     out.update(extras(history=True))
     return out
@@ -610,7 +632,8 @@ def live_payload(since: int) -> dict:
     return {"now": now, "reload": reload, "samples": out, "src": source_status(),
             "water_at": int(water_info["at"]) if water_info["at"] else None,
             "water_interval": water_info["interval"], "language": dashboard_language,
-            "three_phase": three_phase_available(), "appliances": dashboard_appliances, **extras()}
+            "three_phase": three_phase_available(), "appliances": dashboard_appliances,
+            "charger_polling": charger_polling_state(), **extras()}
 
 
 def source_status() -> dict:
@@ -662,6 +685,41 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(json.dumps(live_payload(since)).encode(), "application/json")
         else:
             self.reply(b"not found", "text/plain", 404)
+
+    def do_POST(self) -> None:
+        global charger_poll_paused
+        url = urlparse(self.path)
+        if url.path != "/api/charger-polling":
+            self.reply(b"not found", "text/plain", 404)
+            return
+        if not self.headers.get("Content-Type", "").startswith("application/json"):
+            self.reply(b"expected application/json", "text/plain", 415)
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if not 0 < length <= 1024:
+                raise ValueError("invalid request size")
+            body = json.loads(self.rfile.read(length))
+        except (ValueError, json.JSONDecodeError):
+            self.reply(b"invalid JSON request", "text/plain", 400)
+            return
+        if not isinstance(body, dict) or type(body.get("paused")) is not bool:
+            self.reply(b'"paused" must be a boolean', "text/plain", 400)
+            return
+        with charger_poll_lock:
+            if "charger" not in sources:
+                self.reply(b"Alfen charger is not configured", "text/plain", 409)
+                return
+            if body["paused"]:
+                close = getattr(sources["charger"], "close", None)
+                if close:
+                    close()
+            charger_poll_paused = body["paused"]
+            if charger_poll_paused:
+                with lock:
+                    latest.pop("charger", None)
+            state = {"available": True, "paused": charger_poll_paused}
+        self.reply(json.dumps(state).encode(), "application/json")
 
 
 class Server(ThreadingHTTPServer):

@@ -34,6 +34,9 @@ main{display:grid;gap:12px;padding:12px 14px 20px;max-width:1200px;margin:auto;g
 section{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 12px 6px}
 section.wide{grid-column:1/-1}
 section.phases{grid-column:1}
+#charger-polling{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+#charger-polling button{font:inherit;padding:6px 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--fg);cursor:pointer}
+#charger-polling button:disabled{opacity:.6;cursor:wait}
 .head{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 8px}
 .phase-legend{display:flex;flex-wrap:wrap;gap:3px 12px;color:var(--mute);font-size:11px;padding-top:2px}
 .phase-legend:empty{display:none}
@@ -76,6 +79,10 @@ const TEXT = {
   nl: {
     connection:'verbinding', balance:'Energiebalans', grid:'Net', solar:'Zon', carBattery:'Auto batterij', water:'Water', peak:'Maandpiek',
     gridNote:'+ afname · − injectie', solarNote:'productie',
+    pauseCharger:'Pauzeer uitlezen Alfen', resumeCharger:'Hervat uitlezen Alfen',
+    chargerPollingActive:'Uitlezen actief. Pauzeren maakt de verbinding vrij voor MyEve; laden verandert niet.',
+    chargerPollingPaused:'Uitlezen gepauzeerd. Laden blijft ongewijzigd.',
+    chargerPollingError:'Kon uitlezen niet wijzigen: {0}',
     phases:'Netverbruik per fase', phasesNote:'+ afname · − injectie', phaseL1:'L1', phaseL2:'L2', phaseL3:'L3', phaseThree:'3-fase',
     house:'huis', carCharging:'Auto laden', gridImport:'Netafname', gridExport:'Injectie', solarGenerated:'Zon opgewekt', selfConsumption:'Zelfverbruik zon',
     summaryTitle:'Verbruik en opwekking · laatste {0}', summaryNote:'Energie over de geselecteerde periode · ≈ geeft onvolledige meetdekking aan',
@@ -94,6 +101,10 @@ const TEXT = {
   en: {
     connection:'connection', balance:'Energy balance', grid:'Grid', solar:'Solar', carBattery:'Car battery', water:'Water', peak:'Monthly peak',
     gridNote:'+ import · − export', solarNote:'production',
+    pauseCharger:'Pause Alfen polling', resumeCharger:'Resume Alfen polling',
+    chargerPollingActive:'Polling is active. Pausing frees the connection for MyEve; charging is unchanged.',
+    chargerPollingPaused:'Polling is paused. Charging remains unchanged.',
+    chargerPollingError:'Could not change polling: {0}',
     phases:'Grid power by phase', phasesNote:'+ import · − export', phaseL1:'L1', phaseL2:'L2', phaseL3:'L3', phaseThree:'3-phase',
     house:'home', carCharging:'Car charging', gridImport:'Grid import', gridExport:'Grid export', solarGenerated:'Solar generated', selfConsumption:'Solar self-use',
     summaryTitle:'Usage and generation · last {0}', summaryNote:'Energy for the selected period · ≈ indicates incomplete measurement coverage',
@@ -128,7 +139,7 @@ const M = [
 const SRC_KEY = {grid:'grid', solar:'solar', charger:'chargerSource', water:'water'};
 TEXT.nl.chargerSource = 'laadpaal'; TEXT.en.chargerSource = 'charger';
 const RANGES = [900,3600,21600,86400];
-let T = [], V = Array.from({length:8}, () => []), since = null, now = Date.now()/1000, span = 900, cursor = null, wAt = null, wInt = 300, hasCharger = false, hasGrid = false, hasSolar = false, S = [], socOn = false, peak = null, carDistance = null, phaseAppliances = {};
+let T = [], V = Array.from({length:8}, () => []), since = null, now = Date.now()/1000, span = 900, cursor = null, wAt = null, wInt = 300, hasCharger = false, hasGrid = false, hasSolar = false, S = [], socOn = false, peak = null, carDistance = null, phaseAppliances = {}, chargerPolling = {available:false, paused:false};
 
 // ---- DOM
 const main = document.getElementById('charts');
@@ -172,6 +183,34 @@ const pk = document.createElement('section');
 pk.className = 'wide'; pk.id = 'peak'; pk.style.display = 'none';
 pk.innerHTML = `<div class="head"><span class="name" data-label="peak"></span><span class="sub"></span><span class="val">–</span></div><div class="bar"><i></i></div><div class="note"></div>`;
 main.appendChild(pk);
+const chargerControl = document.createElement('section');
+chargerControl.className = 'wide'; chargerControl.id = 'charger-polling'; chargerControl.style.display = 'none';
+chargerControl.innerHTML = '<button type="button"></button><span class="sub"></span>';
+main.appendChild(chargerControl);
+const chargerButton = chargerControl.querySelector('button');
+const chargerNote = chargerControl.querySelector('.sub');
+function setChargerPolling(state) {
+  chargerPolling = state || {available:false, paused:false};
+  chargerControl.style.display = chargerPolling.available ? '' : 'none';
+  chargerButton.textContent = tr(chargerPolling.paused ? 'resumeCharger' : 'pauseCharger');
+  chargerButton.setAttribute('aria-pressed', String(chargerPolling.paused));
+  chargerNote.textContent = tr(chargerPolling.paused ? 'chargerPollingPaused' : 'chargerPollingActive');
+}
+chargerButton.addEventListener('click', async () => {
+  chargerButton.disabled = true;
+  try {
+    const r = await fetch('/api/charger-polling', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({paused:!chargerPolling.paused})
+    });
+    if (!r.ok) throw new Error(r.status);
+    setChargerPolling(await r.json());
+  } catch (e) {
+    chargerNote.textContent = tr('chargerPollingError', e.message || e);
+  } finally {
+    chargerButton.disabled = false;
+  }
+});
 const nav = document.getElementById('range');
 for (const secs of RANGES) {
   const b = document.createElement('button'); b.dataset.seconds = secs;
@@ -193,6 +232,7 @@ function setLanguage(code) {
   }
   for (const el of document.querySelectorAll('[data-label]')) el.textContent = tr(el.dataset.label);
   for (const b of nav.children) b.textContent = TEXT[language].rangeButtons[b.dataset.seconds];
+  setChargerPolling(chargerPolling);
   renderPhaseLegend();
   render();
 }
@@ -205,7 +245,7 @@ async function getJSON(url) {
 }
 async function loadHistory() {
   const d = await getJSON('/api/history');
-  T = d.t; V = [d.grid, d.solar, d.charger, d.home, d.water || [], d.phase_l1 || [], d.phase_l2 || [], d.phase_l3 || []]; since = d.until; now = d.now; wAt = d.water_at; wInt = d.water_interval || 300; S = d.soc || []; extras(d); setSrc(d.src, d.three_phase, d.appliances);
+  T = d.t; V = [d.grid, d.solar, d.charger, d.home, d.water || [], d.phase_l1 || [], d.phase_l2 || [], d.phase_l3 || []]; since = d.until; now = d.now; wAt = d.water_at; wInt = d.water_interval || 300; S = d.soc || []; extras(d); setSrc(d.src, d.three_phase, d.appliances); setChargerPolling(d.charger_polling);
   setLanguage(d.language === 'en' ? 'en' : 'nl');
 }
 function extras(d) {
@@ -255,7 +295,7 @@ async function tick() {
       if (d.reload) await loadHistory();
       else {
         for (const s of d.samples) { T.push(s[0]); for (let j = 0; j < 8; j++) V[j].push(s[j+1]); since = s[0]; }
-        now = d.now; wAt = d.water_at; wInt = d.water_interval || wInt; extras(d); setSrc(d.src, d.three_phase, d.appliances);
+        now = d.now; wAt = d.water_at; wInt = d.water_interval || wInt; extras(d); setSrc(d.src, d.three_phase, d.appliances); setChargerPolling(d.charger_polling);
       }
     }
     trim(); dot.className = 'dot on'; render();
