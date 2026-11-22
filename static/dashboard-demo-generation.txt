@@ -1,0 +1,10 @@
+Screenshot generation instruction:
+
+- all in english
+- 12h view at 16:00
+- sunny day up until 6kw solar, some realistic fluctuation, currently 4kw
+- some peak usages, such as heatpump, induction hob
+- monthly peak of 4,2kw
+- active car charging activated, showing dynamic car charging throughout the day starting around 12:15 using full solar surplus (net injection before that)
+- water usage randomly spread
+- car battery going down in the morning until 12:15 (drive), and going up while charging

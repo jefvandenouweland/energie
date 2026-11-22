@@ -12,6 +12,9 @@
     "host": "192.168.0.204",
     "username": "admin",
     "password": "CHANGE-ME",
+    "phases": 1,
+    "max_current_a": 26,
+    "voltage": 230,
     "interval": 10
   },
   "sma": {

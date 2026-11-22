@@ -35,8 +35,24 @@ section{background:var(--card);border:1px solid var(--line);border-radius:10px;p
 section.wide{grid-column:1/-1}
 section.phases{grid-column:1}
 #charger-polling{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
-#charger-polling button{font:inherit;padding:6px 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--fg);cursor:pointer}
-#charger-polling button:disabled{opacity:.6;cursor:wait}
+#charger-polling .sub{flex-basis:100%}
+.control-toggle{display:inline-flex;align-items:center;gap:10px;cursor:pointer;user-select:none}
+.control-toggle input{position:absolute;width:1px;height:1px;opacity:0}
+.switch{position:relative;display:inline-block;width:46px;height:26px;flex:none;border-radius:20px;background:var(--mute);transition:background .2s}
+.switch::after{position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;content:"";transition:transform .2s}
+.control-toggle input:checked+.switch{background:var(--grid-out)}
+.control-toggle input:checked+.switch::after{transform:translateX(20px)}
+.control-toggle input:focus-visible+.switch{outline:2px solid var(--charger);outline-offset:2px}
+.control-toggle input:disabled+.switch{opacity:.55;cursor:wait}
+#ev-control{display:block}
+#ev-control .ev-row{display:grid;grid-template-columns:minmax(150px,1fr) minmax(140px,2fr) auto;align-items:center;gap:8px;margin:9px 0}
+#ev-control input[type=range]{width:100%;accent-color:var(--charger)}
+#ev-control output{min-width:76px;text-align:right;font-variant-numeric:tabular-nums}
+#ev-control .ev-status{margin:8px 0;color:var(--mute);font-size:13px}
+#ev-control .ev-active{margin-top:12px}
+#ev-control .ev-target{margin:8px 0 2px;color:var(--charger);font-size:16px;font-weight:650;font-variant-numeric:tabular-nums}
+#ev-control .ev-limit{color:var(--mute);font-size:13px}
+@media(max-width:500px){#ev-control .ev-row{grid-template-columns:1fr auto}#ev-control .ev-row input{grid-column:1/-1;grid-row:2}}
 .head{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 8px}
 .phase-legend{display:flex;flex-wrap:wrap;gap:3px 12px;color:var(--mute);font-size:11px;padding-top:2px}
 .phase-legend:empty{display:none}
@@ -73,16 +89,29 @@ canvas{display:block;width:100%;height:170px;touch-action:pan-y}
 <main id="charts"></main>
 <script>
 "use strict";
-const GAP = 35;                      // seconden zonder data waarna de lijn onderbroken wordt
+const GAP = 35;                      // seconds without data before the line is interrupted
 const MAX_AGE_UI = 5;
 const TEXT = {
   nl: {
     connection:'verbinding', balance:'Energiebalans', grid:'Net', solar:'Zon', carBattery:'Auto batterij', water:'Water', peak:'Maandpiek',
+    rangeLabel:'Tijdsbereik',
     gridNote:'+ afname · − injectie', solarNote:'productie',
-    pauseCharger:'Pauzeer uitlezen Alfen', resumeCharger:'Hervat uitlezen Alfen',
+    chargerPollingLabel:'Alfen uitlezen',
     chargerPollingActive:'Uitlezen actief. Pauzeren maakt de verbinding vrij voor MyEve; laden verandert niet.',
     chargerPollingPaused:'Uitlezen gepauzeerd. Laden blijft ongewijzigd.',
     chargerPollingError:'Kon uitlezen niet wijzigen: {0}',
+    evControl:'Auto laden aansturen', evInjection:'Injectie vanaf', evMinimum:'Minimum laadsnelheid',
+    evEnabled:'Laadpaal aansturen',
+    evTarget:'Berekende laadsnelheid',
+    evEnabledNote:'Actieve regeling', evDryRunNote:'Dry-run · laadpaal wordt niet aangestuurd',
+    evQuarterLimit:'Kwartierlimiet netafname',
+    evSaveError:'Kon instellingen niet opslaan: {0}',
+    evWaiting:'Wacht op geldige P1- en laadpaalmetingen',
+    evStatusThreshold:'Ingestelde injectiedrempel niet bereikt',
+    evStatusSurplus:'Beschikbaar zonne-overschot onder injectiedrempel; laden gepauzeerd',
+    evStatusQuarterLimit:'Kwartierlimiet bereikt; laden gepauzeerd',
+    evStatusCalculated:'Laadsnelheid berekend',
+    evControlError:'Fout bij aansturen: {0}',
     phases:'Netverbruik per fase', phasesNote:'+ afname · − injectie', phaseL1:'L1', phaseL2:'L2', phaseL3:'L3', phaseThree:'3-fase',
     house:'huis', carCharging:'Auto laden', gridImport:'Netafname', gridExport:'Injectie', solarGenerated:'Zon opgewekt', selfConsumption:'Zelfverbruik zon',
     summaryTitle:'Verbruik en opwekking · laatste {0}', summaryNote:'Energie over de geselecteerde periode · ≈ geeft onvolledige meetdekking aan',
@@ -93,18 +122,31 @@ const TEXT = {
     waterWait:'wacht op eerste meting', measurementEvery:'laatste {0} · meting elke {1}, laatst {2} · per {3}',
     waterNotReported:'nog niet gemeld', perBucket:'per {0}', waitingMeasurement:'wacht op meting',
     peakHighest:'hoogste kwartier deze maand', peakAt:'om {0}', quarterAverage:'Dit kwartier gemiddeld {0}', ofPeak:'{0} % van je piek', newPeak:'nieuwe piek!',
-    ranges:{900:'15 min',3600:'1 uur',21600:'6 uur',86400:'24 uur'},
-    shortRanges:{900:'15 min',3600:'1 uur',21600:'6 uur',86400:'24 uur'},
-    buckets:{900:'1 min',3600:'2 min',21600:'10 min',86400:'30 min'},
-    rangeButtons:{900:'15m',3600:'1u',21600:'6u',86400:'24u'}
+    ranges:{900:'15 min',3600:'1 uur',21600:'6 uur',43200:'12 uur',86400:'24 uur'},
+    shortRanges:{900:'15 min',3600:'1 uur',21600:'6 uur',43200:'12 uur',86400:'24 uur'},
+    buckets:{900:'1 min',3600:'2 min',21600:'10 min',43200:'20 min',86400:'30 min'},
+    rangeButtons:{900:'15m',3600:'1u',21600:'6u',43200:'12u',86400:'24u'}
   },
   en: {
     connection:'connection', balance:'Energy balance', grid:'Grid', solar:'Solar', carBattery:'Car battery', water:'Water', peak:'Monthly peak',
+    rangeLabel:'Time range',
     gridNote:'+ import · − export', solarNote:'production',
-    pauseCharger:'Pause Alfen polling', resumeCharger:'Resume Alfen polling',
+    chargerPollingLabel:'Alfen polling',
     chargerPollingActive:'Polling is active. Pausing frees the connection for MyEve; charging is unchanged.',
     chargerPollingPaused:'Polling is paused. Charging remains unchanged.',
     chargerPollingError:'Could not change polling: {0}',
+    evControl:'Control car charging', evInjection:'Start at grid export', evMinimum:'Minimum charging speed',
+    evEnabled:'Control the charger',
+    evTarget:'Calculated charging speed',
+    evEnabledNote:'Automatic control is active', evDryRunNote:'Dry run · charger is not controlled',
+    evQuarterLimit:'Quarter-hour grid import limit',
+    evSaveError:'Could not save settings: {0}',
+    evWaiting:'Waiting for valid P1 and charger readings',
+    evStatusThreshold:'Configured export threshold not reached',
+    evStatusSurplus:'Available solar surplus below export threshold; charging paused',
+    evStatusQuarterLimit:'Quarter-hour limit reached; charging paused',
+    evStatusCalculated:'Charging speed calculated',
+    evControlError:'Control error: {0}',
     phases:'Grid power by phase', phasesNote:'+ import · − export', phaseL1:'L1', phaseL2:'L2', phaseL3:'L3', phaseThree:'3-phase',
     house:'home', carCharging:'Car charging', gridImport:'Grid import', gridExport:'Grid export', solarGenerated:'Solar generated', selfConsumption:'Solar self-use',
     summaryTitle:'Usage and generation · last {0}', summaryNote:'Energy for the selected period · ≈ indicates incomplete measurement coverage',
@@ -115,10 +157,10 @@ const TEXT = {
     waterWait:'waiting for first reading', measurementEvery:'last {0} · reading every {1}, latest {2} · per {3}',
     waterNotReported:'not reported yet', perBucket:'per {0}', waitingMeasurement:'waiting for reading',
     peakHighest:'highest quarter-hour average this month', peakAt:'at {0}', quarterAverage:'Current quarter average {0}', ofPeak:'{0} % of peak', newPeak:'new peak!',
-    ranges:{900:'15 min',3600:'1 hour',21600:'6 hours',86400:'24 hours'},
-    shortRanges:{900:'15 min',3600:'1 hour',21600:'6 hours',86400:'24 hours'},
-    buckets:{900:'1 min',3600:'2 min',21600:'10 min',86400:'30 min'},
-    rangeButtons:{900:'15m',3600:'1h',21600:'6h',86400:'24h'}
+    ranges:{900:'15 min',3600:'1 hour',21600:'6 hours',43200:'12 hours',86400:'24 hours'},
+    shortRanges:{900:'15 min',3600:'1 hour',21600:'6 hours',43200:'12 hours',86400:'24 hours'},
+    buckets:{900:'1 min',3600:'2 min',21600:'10 min',43200:'20 min',86400:'30 min'},
+    rangeButtons:{900:'15m',3600:'1h',21600:'6h',43200:'12h',86400:'24h'}
   }
 };
 let language = 'nl';
@@ -126,8 +168,20 @@ const tr = (key, ...args) => {
   let s = TEXT[language][key];
   for (let i = 0; i < args.length; i++) s = s.replace(`{${i}}`, args[i]);
   return s;
+}
+function evStatusText(status) {
+  const keys = {
+    'Configured export threshold not reached':'evStatusThreshold',
+    'Available solar surplus below export threshold; charging paused':'evStatusSurplus',
+    'Quarter-hour limit reached; charging paused':'evStatusQuarterLimit',
+    'Charging speed calculated':'evStatusCalculated'
+  };
+  if (keys[status]) return tr(keys[status]);
+  if (status?.startsWith('Control error: ')) return tr('evControlError', status.slice('Control error: '.length));
+  if (status === 'Waiting for valid P1 and charger readings') return tr('evWaiting');
+  return status || '';
 };
-// V-indexen: 0 net, 1 zon, 2 laadpaal, 3 huis, 4 water, 5-7 netvermogen per fase
+// V indexes: 0 grid, 1 solar, 2 charger, 3 home, 4 water, 5-7 phase power
 const M = [
   {k:'balance', nameKey:'balance', stack:true, balance:true, signed:true, wide:true, h:270},
   {k:'grid',  i:0, nameKey:'grid',  noteKey:'gridNote', signed:true},
@@ -137,9 +191,11 @@ const M = [
   {k:'water', i:4, nameKey:'water', water:true, tick: v => String(+v.toFixed(1)).replace('.', language === 'nl' ? ',' : '.')},
 ];
 const SRC_KEY = {grid:'grid', solar:'solar', charger:'chargerSource', water:'water'};
-TEXT.nl.chargerSource = 'laadpaal'; TEXT.en.chargerSource = 'charger';
-const RANGES = [900,3600,21600,86400];
+TEXT.nl.chargerSource = 'laadpaal';
+TEXT.en.chargerSource = 'charger';
+const RANGES = [900,3600,21600,43200,86400];
 let T = [], V = Array.from({length:8}, () => []), since = null, now = Date.now()/1000, span = 900, cursor = null, wAt = null, wInt = 300, hasCharger = false, hasGrid = false, hasSolar = false, S = [], socOn = false, peak = null, carDistance = null, phaseAppliances = {}, chargerPolling = {available:false, paused:false};
+let evControl = null, evControlDirty = false;
 
 // ---- DOM
 const main = document.getElementById('charts');
@@ -185,30 +241,94 @@ pk.innerHTML = `<div class="head"><span class="name" data-label="peak"></span><s
 main.appendChild(pk);
 const chargerControl = document.createElement('section');
 chargerControl.className = 'wide'; chargerControl.id = 'charger-polling'; chargerControl.style.display = 'none';
-chargerControl.innerHTML = '<button type="button"></button><span class="sub"></span>';
+chargerControl.innerHTML = '<label class="control-toggle"><span class="control-toggle-label" data-label="chargerPollingLabel"></span><input id="charger-polling-toggle" type="checkbox"><span class="switch"></span></label><span class="sub"></span>';
 main.appendChild(chargerControl);
-const chargerButton = chargerControl.querySelector('button');
+const chargerToggle = chargerControl.querySelector('#charger-polling-toggle');
 const chargerNote = chargerControl.querySelector('.sub');
+const evControlCard = document.createElement('section');
+evControlCard.id = 'ev-control';
+evControlCard.className = 'wide';
+evControlCard.style.display = 'none';
+evControlCard.innerHTML = `<div class="head"><span class="name" data-label="evControl"></span></div>
+  <div class="ev-row"><label for="ev-injection" data-label="evInjection"></label><input id="ev-injection" type="range" min="0" max="1400" step="100"><output></output></div>
+  <div class="ev-row"><label for="ev-minimum" data-label="evMinimum"></label><input id="ev-minimum" type="range"><output></output></div>
+  <label class="control-toggle ev-active"><span class="control-toggle-label" data-label="evEnabled"></span><input id="ev-enabled" type="checkbox"><span class="switch"></span></label>
+  <div class="ev-target"></div><div class="ev-limit"></div>
+  <div class="ev-status" id="ev-status"></div>`;
+main.appendChild(evControlCard);
+const evInputs = {
+  injection_w:evControlCard.querySelector('#ev-injection'),
+  minimum_w:evControlCard.querySelector('#ev-minimum'),
+};
+const evStatus = evControlCard.querySelector('#ev-status');
+function evKW(w) { return w == null ? '–' : decimal(w / 1000, 1) + ' kW'; }
+function updateEvSliderLabels() {
+  for (const [key, input] of Object.entries(evInputs))
+    input.nextElementSibling.textContent = evKW(Number(input.value));
+}
+function setEvControl(state) {
+  if (!state) return;
+  evControl = state;
+  evControlCard.style.display = state.available ? '' : 'none';
+  evInputs.minimum_w.min = state.minimum_possible_w;
+  evInputs.minimum_w.max = state.max_w;
+  evInputs.minimum_w.step = state.current_step_w;
+  if (!evControlDirty) {
+    for (const key of Object.keys(evInputs)) evInputs[key].value = state[key];
+    evControlCard.querySelector('#ev-enabled').checked = state.enabled;
+  }
+  chargerToggle.disabled = state.enabled;
+  updateEvSliderLabels();
+  evControlCard.querySelector('.ev-target').textContent =
+    state.target_w == null ? `${tr('evTarget')}: –` : `${tr('evTarget')}: ${evKW(state.target_w)}`;
+  evControlCard.querySelector('.ev-limit').textContent = `${tr('evQuarterLimit')}: ${evKW(state.quarter_limit_w)}`;
+  const mode = state.enabled ? tr('evEnabledNote') : tr('evDryRunNote');
+  evStatus.textContent = `${mode} · ${state.target_w == null ? tr('evWaiting') : evStatusText(state.status)}`;
+}
+async function saveEvControl() {
+  if (!evControl) return;
+  evControlDirty = false;
+  const payload = {
+    enabled:evControlCard.querySelector('#ev-enabled').checked,
+    ...Object.fromEntries(Object.entries(evInputs).map(([key, input]) => [key, Number(input.value)]))
+  };
+  try {
+    const r = await fetch('/api/ev-control', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)
+    });
+    if (!r.ok) throw new Error(await r.text() || r.status);
+    setEvControl(await r.json());
+  } catch (e) {
+    evStatus.textContent = tr('evSaveError', e.message || e);
+  }
+}
+for (const input of Object.values(evInputs)) {
+  input.addEventListener('input', () => { evControlDirty = true; updateEvSliderLabels(); });
+  input.addEventListener('change', saveEvControl);
+}
+evControlCard.querySelector('#ev-enabled').addEventListener('change', saveEvControl);
 function setChargerPolling(state) {
   chargerPolling = state || {available:false, paused:false};
   chargerControl.style.display = chargerPolling.available ? '' : 'none';
-  chargerButton.textContent = tr(chargerPolling.paused ? 'resumeCharger' : 'pauseCharger');
-  chargerButton.setAttribute('aria-pressed', String(chargerPolling.paused));
+  chargerToggle.checked = !chargerPolling.paused;
+  chargerToggle.setAttribute('aria-label', tr('chargerPollingLabel'));
+  chargerToggle.disabled = evControl?.enabled === true;
   chargerNote.textContent = tr(chargerPolling.paused ? 'chargerPollingPaused' : 'chargerPollingActive');
 }
-chargerButton.addEventListener('click', async () => {
-  chargerButton.disabled = true;
+chargerToggle.addEventListener('change', async () => {
+  chargerToggle.disabled = true;
   try {
     const r = await fetch('/api/charger-polling', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({paused:!chargerPolling.paused})
+      body:JSON.stringify({paused:!chargerToggle.checked})
     });
     if (!r.ok) throw new Error(r.status);
     setChargerPolling(await r.json());
   } catch (e) {
+    chargerToggle.checked = !chargerPolling.paused;
     chargerNote.textContent = tr('chargerPollingError', e.message || e);
   } finally {
-    chargerButton.disabled = false;
+    chargerToggle.disabled = evControl?.enabled === true;
   }
 });
 const nav = document.getElementById('range');
@@ -219,9 +339,10 @@ for (const secs of RANGES) {
   nav.appendChild(b);
 }
 function setLanguage(code) {
-  language = code;
-  document.documentElement.lang = code;
-  document.title = code === 'nl' ? 'Energie' : 'Energy';
+  language = code === 'en' ? 'en' : 'nl';
+  document.documentElement.lang = language;
+  document.title = language === 'nl' ? 'Energie' : 'Energy';
+  document.getElementById('range').setAttribute('aria-label', tr('rangeLabel'));
   document.getElementById('app-title').textContent = document.title;
   document.querySelector('meta[name="apple-mobile-web-app-title"]').content = document.title;
   document.getElementById('dot').title = tr('connection');
@@ -233,6 +354,7 @@ function setLanguage(code) {
   for (const el of document.querySelectorAll('[data-label]')) el.textContent = tr(el.dataset.label);
   for (const b of nav.children) b.textContent = TEXT[language].rangeButtons[b.dataset.seconds];
   setChargerPolling(chargerPolling);
+  if (evControl) setEvControl(evControl);
   renderPhaseLegend();
   render();
 }
@@ -246,11 +368,12 @@ async function getJSON(url) {
 async function loadHistory() {
   const d = await getJSON('/api/history');
   T = d.t; V = [d.grid, d.solar, d.charger, d.home, d.water || [], d.phase_l1 || [], d.phase_l2 || [], d.phase_l3 || []]; since = d.until; now = d.now; wAt = d.water_at; wInt = d.water_interval || 300; S = d.soc || []; extras(d); setSrc(d.src, d.three_phase, d.appliances); setChargerPolling(d.charger_polling);
-  setLanguage(d.language === 'en' ? 'en' : 'nl');
+  setLanguage(d.language);
 }
 function extras(d) {
   socOn = !!d.soc_on; peak = d.peak || null;
   carDistance = d.car_distance || null;
+  setEvControl(d.ev_control);
   const l = d.soc_last;
   if (l && (!S.length || l[0] > S[S.length - 1][0])) S.push(l);
 }
@@ -284,7 +407,7 @@ function trim() {
   const cutoff = now - 86400; let n = 0;
   while (n < T.length && T[n] < cutoff) n++;
   if (n) { T.splice(0, n); for (const v of V) v.splice(0, n); }
-  while (S.length > 1 && S[1][0] <= cutoff) S.shift();   // houd 1 oudere melding om de lijn voort te zetten
+  while (S.length > 1 && S[1][0] <= cutoff) S.shift();   // keep one older report to extend the line
 }
 async function tick() {
   const t0 = performance.now(), dot = document.getElementById('dot');
@@ -314,7 +437,7 @@ const locale = () => language === 'nl' ? 'nl-BE' : 'en-GB';
 const hhmm = t => new Date(t*1000).toLocaleTimeString(locale(), {hour:'2-digit', minute:'2-digit'});
 const stamp = t => new Date(t*1000).toLocaleString(locale(), {weekday:'short', hour:'2-digit', minute:'2-digit', second:'2-digit'});
 const fmtL = l => l == null ? '–' : l >= 1000 ? decimal(l / 1000, 2) + ' m³' : (l < 10 ? decimal(l, 1) : Math.round(l)) + ' L';
-const BUCKET = {900:60, 3600:120, 21600:600, 86400:1800};         // seconden per punt van de golf
+const BUCKET = {900:60, 3600:120, 21600:600, 43200:1200, 86400:1800};         // seconds per point of the wave
 function integrate(indexes, start, end, transform = x => x) {
   const energy = indexes.map(() => 0);
   let seconds = 0;
@@ -357,8 +480,8 @@ function renderSummary() {
   values[5].textContent = selfUse == null ? '–' : (paired.seconds < span * .99 ? '≈' : '') + Math.round(selfUse) + ' %';
   el.querySelector('.summary-bar i').style.width = (selfUse == null ? 0 : selfUse) + '%';
 }
-// De watermeter meldt zich maar om de wInt seconden. Het verbruik van zo'n melding is
-// verdeeld over het interval ervoor; na de laatste melding is het verbruik nog onbekend.
+// The water meter reports every wInt seconds. Its usage is distributed over the
+// preceding interval; after the latest report, usage is still unknown.
 function waterBuckets() {
   const size = BUCKET[span], I = wInt, t0 = now - span, ys = V[4];
   const out = {size, total: null, wat: null, pts: [], byB: new Map()};
@@ -376,14 +499,14 @@ function waterBuckets() {
   for (let b = Math.floor(t0 / size); b * size < wat; b++) {
     const bs = b * size, end = Math.min(bs + size, wat), cov = end - bs;
     if (cov < 1) continue;
-    const L = (raw.get(b) || 0) / 1000 * size / cov;   // laatste tijdvak is maar deels gemeld: omgerekend naar volle lengte
+    const L = (raw.get(b) || 0) / 1000 * size / cov;   // latest partially reported interval: converted to full length
     out.pts.push([(bs + end) / 2, L, b]); out.byB.set(b, L);
   }
   out.total = total; out.wat = wat;
   return out;
 }
-// Verbruik op punt i: huis (onderaan) + laadpaal (erbovenop). Zonder laadpaaldata blijft het totaal
-// bekend (= net + zon, ook voor oudere opgeslagen punten) maar is de verdeling onbekend (unk).
+// Usage at point i: home (bottom) + charger (on top). Without charger data, the total
+// remains known (= grid + solar, including older stored points), but the distribution is unknown (unk).
 function usageAt(i) {
   const h = V[3][i], c = V[2][i];
   if (h != null) return hasCharger && c == null ? {total: h, home: null, charger: null, unk: true}
@@ -392,7 +515,7 @@ function usageAt(i) {
     return {total: Math.max(0, (V[0][i] ?? 0) + (V[1][i] ?? 0)), home: null, charger: null, unk: true};
   return null;
 }
-const stackLayers = () => {            // [huis, totaal met bekende verdeling, totaal zonder bekende verdeling]
+const stackLayers = () => {            // [home, total with known distribution, total with unknown distribution]
   const n = T.length, hk = new Array(n), tk = new Array(n), tu = new Array(n), U = new Array(n);
   for (let i = 0; i < n; i++) {
     const u = U[i] = usageAt(i);
@@ -400,8 +523,8 @@ const stackLayers = () => {            // [huis, totaal met bekende verdeling, t
     tk[i] = u && !u.unk ? u.total : null;
     tu[i] = u && u.unk ? u.total : null;
   }
-  // Op elke overgang bekend <-> onbekend laat de grijze laag ook het aangrenzende bekende punt
-  // meetekenen, zodat de twee lagen tegen elkaar aansluiten en er geen holletje tussen valt.
+  // At every known <-> unknown transition, let the gray layer include the adjacent known point
+  // so the two layers join and leave no gap.
   for (let i = 0; i < n; i++) {
     const u = U[i];
     if (u && !u.unk && ((i > 0 && U[i-1] && U[i-1].unk) || (i < n - 1 && U[i+1] && U[i+1].unk))) tu[i] = u.total;
@@ -505,7 +628,7 @@ function render() {
   }
 }
 
-// gemiddelde per pixelkolom; null = lijn onderbreken
+// Average per pixel column; null = interrupt the line
 function columns(ys, t0, W) {
   const pts = []; let cx = -1, sum = 0, n = 0, tsum = 0, lastT = null;
   const flush = () => { if (n) pts.push([(tsum/n - t0) / span * W, sum/n]); sum = n = tsum = 0; };
@@ -536,8 +659,8 @@ function draw(m, col, wb) {
   const t1 = now, t0 = now - span, padB = 16, ph = H - padB;
 
   let solarPts = [], gridPts = [], unkPts = [], phasePts = []; // extra lijnen in energiebalans en fasegrafiek
-  let top = [], low = null;                  // top = zichtbare reeks (bij stapeling het totaal), low = onderste laag
-  if (m.water || m.soc) { /* eigen tekening: zie onderaan */ }
+  let top = [], low = null;                  // top = visible series (for stacking, the total), low = bottom layer
+  if (m.water || m.soc) { /* custom drawing: see below */ }
   else if (m.stack) { const [h, tk, tu] = stackLayers(); low = columns(h, t0, W); top = columns(tk, t0, W); unkPts = columns(tu, t0, W); }
   else if (m.phases) phasePts = m.i.map(i => columns(V[i], t0, W));
   else top = columns(V[m.i], t0, W);
@@ -562,7 +685,7 @@ function draw(m, col, wb) {
     const y = Math.round(Y(v)) + .5;
     ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); ctx.fillText((m.tick || fmtTick)(v), 2, y - 1);
   }
-  const tstep = span >= 86400 ? 14400 : span >= 21600 ? 3600 : span >= 3600 ? 600 : 120;
+  const tstep = span >= 86400 ? 14400 : span >= 43200 ? 7200 : span >= 21600 ? 3600 : span >= 3600 ? 600 : 120;
   const off = new Date(t0*1000).getTimezoneOffset() * 60;
   ctx.textBaseline = 'top'; ctx.textAlign = 'center';
   for (let t = Math.ceil((t0 - off) / tstep) * tstep + off; t <= t1; t += tstep) {
@@ -573,7 +696,7 @@ function draw(m, col, wb) {
 
   // tekenen
   const trace = (seg, from) => { seg.forEach((p, i) => i ? ctx.lineTo(p[0], Y(p[1])) : ctx.moveTo(p[0], Y(p[1]))); };
-  // base = segment waartegen gevuld wordt (onderliggende laag), anders de nullijn
+  // base = segment used as the fill boundary (underlying layer), otherwise the zero line
   const paint = (seg, color, base, alpha) => {
     ctx.strokeStyle = ctx.fillStyle = color; ctx.lineWidth = 1.5; ctx.lineJoin = 'round';
     if (seg.length === 1) { ctx.beginPath(); ctx.arc(seg[0][0], Y(seg[0][1]), 1.5, 0, 6.3); ctx.fill(); return; }
@@ -588,15 +711,15 @@ function draw(m, col, wb) {
     for (const sg of segments(top)) paint(sg, color, null, .18);
     ctx.restore();
   };
-  if (m.water) {                        // verbruik per tijdvak als vloeiende golf met zachte gloed
-    if (wb.wat != null && wb.wat < t1) {  // na de laatste melding is het verbruik nog onbekend
+  if (m.water) {                        // usage per interval as a smooth wave with a soft glow
+    if (wb.wat != null && wb.wat < t1) {  // after the latest report, usage is still unknown
       const x1 = Math.max(0, (wb.wat - t0) / span * W);
       ctx.fillStyle = hexA(col('--mute'), .12); ctx.fillRect(x1, 0, W - x1, ph);
       if (W - x1 > 110) { ctx.fillStyle = col('--mute'); ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(tr('waitingMeasurement'), (x1 + W) / 2, ph / 2); }
     }
     const P = wb.pts.map(p => [(p[0] - t0) / span * W, Y(p[1])]), n = P.length;
     if (n > 1) {
-      // monotone kubische interpolatie: glad, en nooit onder nul of boven de echte piek
+      // Monotone cubic interpolation: smooth, never below zero or above the actual peak
       const hs = [], d = [], k = [];
       for (let i = 0; i < n - 1; i++) { hs.push(P[i+1][0] - P[i][0]); d.push((P[i+1][1] - P[i][1]) / hs[i]); }
       k[0] = d[0]; k[n-1] = d[n-2];
@@ -619,7 +742,7 @@ function draw(m, col, wb) {
       ctx.strokeStyle = c; ctx.lineWidth = 2; ctx.lineJoin = 'round';
       ctx.shadowColor = c; ctx.shadowBlur = 8; ctx.stroke(); ctx.shadowBlur = 0;
     }
-  } else if (m.soc) {                   // batterij: trapjes, de waarde blijft gelden tot de volgende melding
+  } else if (m.soc) {                   // battery: steps, the value remains valid until the next report
     let i0 = 0;
     while (i0 + 1 < S.length && S[i0 + 1][0] <= t0) i0++;
     if (S.length && S[i0][0] <= t1) {
@@ -640,10 +763,10 @@ function draw(m, col, wb) {
     }
   } else if (m.stack) {
     const sT = segments(top), sL = segments(low);
-    sT.forEach((sg, i) => paint(sg, col('--charger'), sL[i], .35));   // laadpaal = band tussen totaal en huis
-    sL.forEach(sg => paint(sg, col('--home'), null, .35));            // huis = vanaf nul
-    for (const sg of segments(unkPts)) paint(sg, col('--mute'), null, .35);   // totaal zonder bekende verdeling
-    if (m.balance) {                                                  // zon en net als lijnen eroverheen
+    sT.forEach((sg, i) => paint(sg, col('--charger'), sL[i], .35));   // charger = band between total and home
+    sL.forEach(sg => paint(sg, col('--home'), null, .35));            // home = from zero
+    for (const sg of segments(unkPts)) paint(sg, col('--mute'), null, .35);   // total with unknown distribution
+    if (m.balance) {                                                  // solar and grid as overlay lines
       for (const sg of segments(solarPts)) paint(sg, col('--solar'), null, 0);
       const gs = segments(gridPts);
       for (const [color, y, h] of [[col('--grid-in'), 0, y0], [col('--grid-out'), y0, H - y0]]) {
@@ -658,7 +781,7 @@ function draw(m, col, wb) {
   } else if (m.signed) { series(col('--grid-in'), [0, y0]); series(col('--grid-out'), [y0, H - y0]); }
   else series(col('--' + m.k));
 
-  // nullijn (net) en cursor
+  // zero line (grid) and cursor
   if (m.signed) { ctx.strokeStyle = col('--mute'); ctx.beginPath(); ctx.moveTo(0, Math.round(y0)+.5); ctx.lineTo(W, Math.round(y0)+.5); ctx.stroke(); }
   if (cursor != null) { const x = Math.round(cursor * W) + .5; ctx.strokeStyle = col('--fg'); ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, ph); ctx.stroke(); }
 }

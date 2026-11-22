@@ -23,6 +23,9 @@
     <marker id="arrow-violet" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
       <path d="M1 1L8 5L1 9" stroke="#B49AFF" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
     </marker>
+    <marker id="arrow-control" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M1 1L8 5L1 9" stroke="#FF9678" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
     <style>
       text{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
       .title{fill:#F4F7FC;font-size:30px;font-weight:700;letter-spacing:-.5px}
@@ -41,7 +44,7 @@
   <circle cx="145" cy="705" r="200" fill="#1D6A62" opacity=".10"/>
 
   <text class="title" x="64" y="72">Energy, from meter to dashboard</text>
-  <text class="subtitle" x="64" y="101">Local readings, BMW CarData, and a dashboard hosted on the Raspberry Pi</text>
+  <text class="subtitle" x="64" y="101">Local readings, EV charging control, BMW CarData, and a dashboard hosted on the Raspberry Pi</text>
   <rect x="1195" y="49" width="181" height="32" rx="16" fill="#1C2A3D" stroke="#34465E"/>
   <circle cx="1214" cy="65" r="5" fill="#55D6A2"/>
   <text x="1227" y="69" fill="#C5D2E2" font-size="11" font-weight="600">HOME NETWORK + CLOUD</text>
@@ -50,6 +53,7 @@
   <path d="M376 225C430 225 444 297 520 297" stroke="#57A6FF" stroke-width="2.5" stroke-linecap="round" marker-end="url(#arrow-blue)"/>
   <path d="M376 406H520" stroke="#FFC857" stroke-width="2.5" stroke-linecap="round" marker-end="url(#arrow-amber)"/>
   <path d="M376 587C430 587 444 507 520 507" stroke="#55D6A2" stroke-width="2.5" stroke-linecap="round" marker-end="url(#arrow-green)"/>
+  <path d="M552 560H480V674H398Q388 674 388 664V649H376" stroke="#FF9678" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-control)"/>
   <path d="M1005 218C956 218 970 288 920 288" stroke="#B49AFF" stroke-width="2.5" stroke-linecap="round" marker-end="url(#arrow-violet)"/>
   <path d="M920 491C954 491 966 497 1005 497" stroke="#57A6FF" stroke-width="2.5" stroke-linecap="round" marker-end="url(#arrow-blue)"/>
 
@@ -89,7 +93,7 @@
 
   <!-- Central Raspberry Pi -->
   <g filter="url(#shadow)">
-    <rect x="520" y="207" width="400" height="392" rx="22" fill="url(#pi)" stroke="#4B6586" stroke-width="1.7"/>
+    <rect x="520" y="207" width="400" height="442" rx="22" fill="url(#pi)" stroke="#4B6586" stroke-width="1.7"/>
     <rect x="540" y="227" width="360" height="48" rx="12" fill="#263951"/>
     <circle cx="562" cy="251" r="6" fill="#55D6A2"/>
     <text x="579" y="257" fill="#F5F8FD" font-size="20" font-weight="700">Raspberry Pi</text>
@@ -111,11 +115,16 @@
     <circle cx="563" cy="481" r="5" fill="#FFC857"/>
     <text x="580" y="486" fill="#DFE8F3" font-size="14" font-weight="600">Local storage</text>
     <text class="card-detail" x="580" y="506">Power history + BMW battery events</text>
-    <rect x="552" y="535" width="336" height="42" rx="11" fill="#152235" stroke="#334A65"/>
-    <path d="M569 548h15v15h-15z" stroke="#83A0BE" stroke-width="1.6"/>
-    <path d="M573 552h7m-7 4h7m-7 4h5" stroke="#83A0BE" stroke-width="1.4" stroke-linecap="round"/>
-    <text x="596" y="553" fill="#C7D3E2" font-size="11" font-weight="600">ENERGY MONITOR SERVICE</text>
-    <text x="596" y="568" fill="#879AB1" font-size="10">runs continuously on the Pi</text>
+    <rect x="552" y="527" width="336" height="54" rx="11" fill="#30252A" stroke="#704A45"/>
+    <circle cx="573" cy="548" r="8" fill="#4B302F"/>
+    <path d="M569 548h8m-4-4v8m-3 8h6" stroke="#FF9678" stroke-width="1.7" stroke-linecap="round"/>
+    <text x="592" y="547" fill="#FFE5DC" font-size="13" font-weight="650">EV charging control</text>
+    <text x="592" y="566" fill="#D6B6AD" font-size="11">P1 + charger feedback · solar surplus · grid limit</text>
+    <rect x="552" y="594" width="336" height="42" rx="11" fill="#152235" stroke="#334A65"/>
+    <path d="M569 607h15v15h-15z" stroke="#83A0BE" stroke-width="1.6"/>
+    <path d="M573 611h7m-7 4h7m-7 4h5" stroke="#83A0BE" stroke-width="1.4" stroke-linecap="round"/>
+    <text x="596" y="612" fill="#C7D3E2" font-size="11" font-weight="600">ENERGY MONITOR SERVICE</text>
+    <text x="596" y="627" fill="#879AB1" font-size="10">runs continuously on the Pi</text>
   </g>
 
   <!-- BMW cloud integration -->
@@ -153,6 +162,8 @@
   <text class="label" x="443" y="403" text-anchor="middle" fill="#FFE09A">solar power</text>
   <rect x="397" y="568" width="90" height="24" rx="12" fill="#142D29" stroke="#295448"/>
   <text class="label" x="442" y="584" text-anchor="middle" fill="#8CE9C5">charging power</text>
+  <rect x="400" y="661" width="107" height="24" rx="12" fill="#342522" stroke="#704A45"/>
+  <text class="label" x="453" y="677" text-anchor="middle" fill="#FFC0AA">current limit</text>
   <rect x="926" y="188" width="70" height="24" rx="12" fill="#241E35" stroke="#483A65"/>
   <text class="label" x="961" y="204" text-anchor="middle" fill="#C9B6FF">BMW data</text>
   <rect x="928" y="515" width="69" height="24" rx="12" fill="#13243A" stroke="#284666"/>
@@ -169,5 +180,7 @@
   <text class="small" x="637" y="758">charger</text>
   <path d="M747 754h38" stroke="#B49AFF" stroke-width="2.5" marker-end="url(#arrow-violet)"/>
   <text class="small" x="795" y="758">BMW CarData over the internet</text>
+  <path d="M1050 754h38" stroke="#FF9678" stroke-width="2.5" marker-end="url(#arrow-control)"/>
+  <text class="small" x="1098" y="758">EV charger control</text>
   <text x="1375" y="758" text-anchor="end" fill="#73859C" font-size="11">Energy Monitor · Raspberry Pi</text>
 </svg>
